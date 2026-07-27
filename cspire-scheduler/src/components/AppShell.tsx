@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import type { Session } from "@supabase/supabase-js";
 import Sidebar from "./Sidebar";
 import { supabase } from "../lib/supabase";
 
@@ -10,16 +9,24 @@ const PUBLIC_ROUTES = ["/login", "/team-schedule"];
 
 function isPublicRoute(pathname: string) {
   return PUBLIC_ROUTES.some(
-    (route) => pathname === route || pathname.startsWith(`${route}/`),
+    (route) =>
+      pathname === route ||
+      pathname.startsWith(`${route}/`),
   );
 }
 
-export default function AppShell({ children }: { children: React.ReactNode }) {
+export default function AppShell({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   const pathname = usePathname();
   const router = useRouter();
   const publicRoute = isPublicRoute(pathname);
-  const [session, setSession] = useState<Session | null>(null);
-  const [checkingSession, setCheckingSession] = useState(!publicRoute);
+
+  const [session, setSession] = useState<unknown>(null);
+  const [checkingSession, setCheckingSession] =
+    useState(!publicRoute);
 
   useEffect(() => {
     let mounted = true;
@@ -36,13 +43,17 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         data: { session: currentSession },
       } = await supabase.auth.getSession();
 
-      if (!mounted) return;
+      if (!mounted) {
+        return;
+      }
 
       setSession(currentSession);
       setCheckingSession(false);
 
       if (!currentSession) {
-        router.replace(`/login?next=${encodeURIComponent(pathname)}`);
+        router.replace(
+          `/login?next=${encodeURIComponent(pathname)}`,
+        );
       }
     }
 
@@ -50,14 +61,19 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
-      if (!mounted) return;
-      setSession(nextSession);
+    } = supabase.auth.onAuthStateChange(
+      (_event, nextSession) => {
+        if (!mounted) {
+          return;
+        }
 
-      if (!nextSession && !publicRoute) {
-        router.replace("/login");
-      }
-    });
+        setSession(nextSession);
+
+        if (!nextSession && !publicRoute) {
+          router.replace("/login");
+        }
+      },
+    );
 
     return () => {
       mounted = false;
@@ -65,25 +81,37 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     };
   }, [pathname, publicRoute, router]);
 
-  if (publicRoute) return <>{children}</>;
+  if (publicRoute) {
+    return <>{children}</>;
+  }
 
   if (checkingSession) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-slate-100 p-6">
         <div className="rounded-xl bg-white p-8 text-center shadow">
-          <h1 className="text-xl font-bold">Workforce Scheduler</h1>
-          <p className="mt-2 text-slate-600">Checking manager access...</p>
+          <h1 className="text-xl font-bold">
+            Workforce Scheduler
+          </h1>
+
+          <p className="mt-2 text-slate-600">
+            Checking manager access...
+          </p>
         </div>
       </div>
     );
   }
 
-  if (!session) return null;
+  if (!session) {
+    return null;
+  }
 
   return (
     <div className="flex min-h-screen">
       <Sidebar />
-      <main className="min-w-0 flex-1 p-4 sm:p-6 lg:p-8">{children}</main>
+
+      <main className="min-w-0 flex-1 p-4 sm:p-6 lg:p-8">
+        {children}
+      </main>
     </div>
   );
 }
