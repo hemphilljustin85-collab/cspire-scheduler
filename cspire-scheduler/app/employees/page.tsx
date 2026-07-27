@@ -11,6 +11,10 @@ type Employee = {
   position: string | null;
   status: string | null;
   hire_date: string | null;
+  email: string | null;
+  phone: string | null;
+  notify_email: boolean;
+  notify_sms: boolean;
 };
 
 type EmployeeForm = {
@@ -20,6 +24,10 @@ type EmployeeForm = {
   status: string;
   hire_date: string;
   store_id: string;
+  email: string;
+  phone: string;
+  notify_email: boolean;
+  notify_sms: boolean;
 };
 
 const emptyForm: EmployeeForm = {
@@ -29,6 +37,10 @@ const emptyForm: EmployeeForm = {
   status: "Active",
   hire_date: "",
   store_id: "",
+  email: "",
+  phone: "",
+  notify_email: true,
+  notify_sms: true,
 };
 
 export default function EmployeesPage() {
@@ -51,7 +63,7 @@ export default function EmployeesPage() {
 
     const { data, error } = await supabase
       .from("employees")
-      .select("id, store_id, employee_name, employee_id, position, status, hire_date")
+      .select("id, store_id, employee_name, employee_id, position, status, hire_date, email, phone, notify_email, notify_sms")
       .order("employee_name");
 
     if (error) {
@@ -81,6 +93,10 @@ export default function EmployeesPage() {
       status: employee.status || "Active",
       hire_date: employee.hire_date || "",
       store_id: employee.store_id || "",
+      email: employee.email || "",
+      phone: employee.phone || "",
+      notify_email: employee.notify_email ?? true,
+      notify_sms: employee.notify_sms ?? true,
     });
     setMessage("");
     setErrorMessage("");
@@ -114,6 +130,10 @@ export default function EmployeesPage() {
       status: form.status.trim() || "Active",
       hire_date: form.hire_date || null,
       store_id: form.store_id.trim() || null,
+      email: form.email.trim() || null,
+      phone: form.phone.trim() || null,
+      notify_email: form.notify_email,
+      notify_sms: form.notify_sms,
     };
 
     const result = editingEmployee
@@ -240,6 +260,73 @@ export default function EmployeesPage() {
             </label>
 
             <label className="space-y-1">
+              <span className="text-sm font-medium">Email address</span>
+              <input
+                type="email"
+                value={form.email}
+                onChange={(event) =>
+                  setForm({ ...form, email: event.target.value })
+                }
+                className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                placeholder="employee@example.com"
+              />
+            </label>
+
+            <label className="space-y-1">
+              <span className="text-sm font-medium">Mobile phone</span>
+              <input
+                type="tel"
+                value={form.phone}
+                onChange={(event) =>
+                  setForm({ ...form, phone: event.target.value })
+                }
+                className="w-full rounded-lg border border-slate-300 px-3 py-2"
+                placeholder="+16015551234"
+              />
+              <span className="text-xs text-slate-500">
+                Use country code format, such as +16015551234.
+              </span>
+            </label>
+
+            <label className="flex items-center gap-3 rounded-lg border border-slate-200 p-3">
+              <input
+                type="checkbox"
+                checked={form.notify_email}
+                onChange={(event) =>
+                  setForm({ ...form, notify_email: event.target.checked })
+                }
+                className="h-4 w-4"
+              />
+              <span>
+                <span className="block text-sm font-medium">
+                  Email schedule notifications
+                </span>
+                <span className="block text-xs text-slate-500">
+                  Send an email when a schedule is published.
+                </span>
+              </span>
+            </label>
+
+            <label className="flex items-center gap-3 rounded-lg border border-slate-200 p-3">
+              <input
+                type="checkbox"
+                checked={form.notify_sms}
+                onChange={(event) =>
+                  setForm({ ...form, notify_sms: event.target.checked })
+                }
+                className="h-4 w-4"
+              />
+              <span>
+                <span className="block text-sm font-medium">
+                  Text schedule notifications
+                </span>
+                <span className="block text-xs text-slate-500">
+                  Send an SMS when a schedule is published.
+                </span>
+              </span>
+            </label>
+
+            <label className="space-y-1">
               <span className="text-sm font-medium">Position</span>
               <select
                 value={form.position}
@@ -353,6 +440,18 @@ export default function EmployeesPage() {
                     <p>{employee.position || "No position assigned"}</p>
                     {employee.employee_id && <p>ID: {employee.employee_id}</p>}
                     {employee.hire_date && <p>Hired: {employee.hire_date}</p>}
+                    {employee.email && (
+                      <p>
+                        Email: {employee.email}
+                        {employee.notify_email ? " · notifications on" : " · notifications off"}
+                      </p>
+                    )}
+                    {employee.phone && (
+                      <p>
+                        Phone: {employee.phone}
+                        {employee.notify_sms ? " · texts on" : " · texts off"}
+                      </p>
+                    )}
                   </div>
                 </div>
 
