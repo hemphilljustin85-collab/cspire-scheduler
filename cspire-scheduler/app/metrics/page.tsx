@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../src/lib/supabase";
+import { downloadCsv } from "../../src/lib/csv";
 
 type Employee = {
   id: string;
@@ -179,6 +180,11 @@ export default function MetricsPage() {
           </p>
         </div>
 
+        <div className="flex gap-2">
+        <button type="button" onClick={() => downloadCsv("metrics.csv", [
+          ["Employee","Current Hours","Total Hours","Days Off","Monday Closes","Friday Closes","Saturday Closes","Saturdays Off"],
+          ...metrics.map((metric) => [employees.find((employee)=>employee.id===metric.employee_id)?.employee_name || "Employee",metric.current_hours,metric.total_hours,metric.days_off,metric.monday_closes,metric.friday_closes,metric.saturday_closes,metric.saturdays_off]),
+        ])} className="rounded-lg bg-emerald-600 px-4 py-2 font-medium text-white hover:bg-emerald-700">Export CSV</button>
         <button
           type="button"
           onClick={() => void loadData()}
@@ -186,6 +192,7 @@ export default function MetricsPage() {
         >
           Refresh Metrics
         </button>
+        </div>
       </div>
 
       {message && (

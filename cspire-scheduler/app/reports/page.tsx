@@ -291,6 +291,26 @@ export default function ReportsPage() {
     window.print();
   }
 
+  function exportCsv() {
+    const escape = (value: unknown) => `"${String(value ?? "").replaceAll('"', '""')}"`;
+    const rows = [
+      ["Employee", "Employee ID", ...WORK_DAYS.map((day) => day.name), "Weekly Hours"],
+      ...reportRows.map((row) => [
+        row.employee.employee_name,
+        row.employee.employee_id || "",
+        ...WORK_DAYS.map((day) => getEntry(row.employee.id, day.offset)?.shift_code || "OFF"),
+        row.hours.toFixed(2),
+      ]),
+    ];
+    const csv = rows.map((row) => row.map(escape).join(",")).join("\r\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `schedule-${weekStart}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <div className="space-y-6">
       <div className="no-print flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
@@ -334,6 +354,14 @@ export default function ReportsPage() {
             className="rounded-lg bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700"
           >
             Print Report
+          </button>
+          <button
+            type="button"
+            onClick={exportCsv}
+            disabled={!schedule}
+            className="rounded-lg bg-emerald-600 px-4 py-2 font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+          >
+            Export CSV
           </button>
         </div>
       </div>

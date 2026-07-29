@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../src/lib/supabase";
+import SetupGuide from "../../src/components/SetupGuide";
 
 type Employee = {
   id: string;
@@ -386,6 +387,8 @@ export default function DashboardPage() {
           <p className="mt-1 text-sm">{errorMessage}</p>
         </div>
       )}
+
+      <SetupGuide />
 
       {loading ? (
         <div className="rounded-xl bg-white p-6 shadow">

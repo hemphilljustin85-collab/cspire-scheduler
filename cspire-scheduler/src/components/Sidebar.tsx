@@ -16,6 +16,7 @@ const links = [
   { name: "Metrics", href: "/metrics", icon: "↗" },
   { name: "Reports", href: "/reports", icon: "▥" },
   { name: "Settings", href: "/settings", icon: "⚙" },
+  { name: "Store Team", href: "/team", icon: "◎" },
 ];
 
 type SidebarProps = {
@@ -33,11 +34,17 @@ export default function Sidebar({
   const router = useRouter();
   const [storeName, setStoreName] = useState("Workforce");
   const [publicSlug, setPublicSlug] = useState("");
+  const [role, setRole] = useState("manager");
 
   useEffect(() => {
     void getCurrentStore().then((store) => {
       setStoreName(store.store_name);
       setPublicSlug(store.public_slug);
+    });
+    void supabase.auth.getUser().then(async ({ data }: { data: { user: { id: string } | null } }) => {
+      if (!data.user) return;
+      const { data: profile } = await supabase.from("profiles").select("role").eq("id", data.user.id).maybeSingle();
+      if (profile?.role) setRole(profile.role);
     });
   }, []);
 
@@ -83,7 +90,9 @@ export default function Sidebar({
 
       <nav className="mt-6 flex-1">
         <ul className="space-y-2">
-          {links.map((link) => {
+          {links.filter((link) =>
+            role !== "viewer" || ["Dashboard", "Schedule", "Metrics", "Reports"].includes(link.name),
+          ).map((link) => {
             const active =
               pathname === link.href ||
               (link.href !== "/" &&

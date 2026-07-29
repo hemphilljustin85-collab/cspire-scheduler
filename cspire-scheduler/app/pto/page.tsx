@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { supabase } from "../../src/lib/supabase";
+import { downloadCsv } from "../../src/lib/csv";
 
 type Employee = {
   id: string;
@@ -226,6 +227,11 @@ export default function PTOPage() {
           </p>
         </div>
 
+        <div className="flex gap-2">
+        <button type="button" onClick={() => downloadCsv("pto.csv", [
+          ["Employee","Start Date","End Date","Status","Reason"],
+          ...sortedRecords.map((record) => [employees.find((employee)=>employee.id===record.employee_id)?.employee_name || "Employee",record.start_date,record.end_date,record.status,record.reason]),
+        ])} className="rounded-lg border border-slate-300 bg-white px-4 py-2 font-medium hover:bg-slate-50">Export CSV</button>
         <button
           type="button"
           onClick={openAddForm}
@@ -233,6 +239,7 @@ export default function PTOPage() {
         >
           Add PTO
         </button>
+        </div>
       </div>
 
       {message && (

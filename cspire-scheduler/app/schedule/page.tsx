@@ -18,6 +18,14 @@ type ScheduleRecord = {
   updated_at: string | null;
 };
 
+type ScheduleVersion = {
+  id: string;
+  version_label: string;
+  schedule_status: string;
+  entries: Array<{ employee_id: string; shift_date: string; shift_code: string }>;
+  created_at: string;
+};
+
 type ShiftCode = string;
 
 type ScheduleGrid = Record<string, Record<string, ShiftCode>>;
@@ -246,6 +254,8 @@ export default function SchedulePage() {
   const [shiftOptions, setShiftOptions] =
     useState<ShiftDefinition[]>(SHIFT_OPTIONS);
   const [publicStoreSlug, setPublicStoreSlug] = useState("");
+  const [versions, setVersions] = useState<ScheduleVersion[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
 
   useEffect(() => {
     void Promise.all([loadEmployees(), loadRules(), loadPTO(), loadCustomShifts()]);
@@ -919,6 +929,8 @@ export default function SchedulePage() {
       }
     }
 
+    await snapshotExistingSchedule(activeScheduleId!, "Before save");
+
     const entries = employees.flatMap((employee) =>
       WORK_DAYS.map((day) => {
         const code = grid[employee.id]?.[String(day.offset)] ?? "OFF";
@@ -986,6 +998,26 @@ export default function SchedulePage() {
       return;
     }
 
+    const publishWarnings = WORK_DAYS.flatMap((day) => {
+      const codes = employees.map((employee) => grid[employee.id]?.[String(day.offset)] ?? "OFF");
+      const openers = codes.filter((code) => code === "815-530" || code === "830-530").length;
+      const closers = codes.filter((code) => code === "1030-715").length;
+      const working = codes.filter((code) => !["OFF", "PTO", "HOLIDAY"].includes(code)).length;
+      const dayWarnings: string[] = [];
+      if (openers < rules.openersPerDay) dayWarnings.push(`${day.name} has ${openers} opener(s); goal ${rules.openersPerDay}.`);
+      if (closers < rules.closersPerDay) dayWarnings.push(`${day.name} has ${closers} closer(s); goal ${rules.closersPerDay}.`);
+      if (working === 0) dayWarnings.push(`${day.name} has no working employees.`);
+      return dayWarnings;
+    });
+    setGenerationWarnings(publishWarnings);
+
+    if (publishWarnings.length > 0) {
+      const confirmed = window.confirm(
+        `This schedule has ${publishWarnings.length} coverage warning(s). Publish it anyway?`,
+      );
+      if (!confirmed) return;
+    }
+
     setPublishing(true);
     setMessage("");
     setErrorMessage("");
@@ -1022,6 +1054,8 @@ export default function SchedulePage() {
         return;
       }
     }
+
+    await snapshotExistingSchedule(activeScheduleId!, "Before publish");
 
     const entries = employees.flatMap((employee) =>
       WORK_DAYS.map((day) => {
@@ -1072,6 +1106,52 @@ export default function SchedulePage() {
       "Schedule published successfully. Employees can now view the read-only Team Schedule.",
     );
     setPublishing(false);
+  }
+
+  async function snapshotExistingSchedule(activeScheduleId: string, label: string) {
+    const [{ data: existing }, store, { data: userData }] = await Promise.all([
+      supabase.from("schedule_entries").select("employee_id,shift_date,shift_code,start_time,end_time,hours").eq("schedule_id", activeScheduleId),
+      getCurrentStore(),
+      supabase.auth.getUser(),
+    ]);
+    if (!existing?.length || !userData.user) return;
+    await supabase.from("schedule_versions").insert({
+      schedule_id: activeScheduleId,
+      store_id: store.id,
+      version_label: label,
+      schedule_status: status,
+      entries: existing,
+      created_by: userData.user.id,
+    });
+  }
+
+  async function loadHistory() {
+    if (!scheduleId) {
+      setErrorMessage("Save this schedule before viewing history.");
+      return;
+    }
+    const { data, error } = await supabase.from("schedule_versions")
+      .select("id,version_label,schedule_status,entries,created_at")
+      .eq("schedule_id", scheduleId).order("created_at", { ascending: false }).limit(20);
+    if (error) setErrorMessage(error.message);
+    else {
+      setVersions((data as ScheduleVersion[]) || []);
+      setShowHistory(true);
+    }
+  }
+
+  function restoreVersion(version: ScheduleVersion) {
+    const restored = makeEmptyGrid(employees);
+    for (const entry of version.entries) {
+      const offset = Math.round((parseLocalDate(entry.shift_date).getTime() - parseLocalDate(weekStart).getTime()) / 86400000);
+      if (offset >= 0 && offset <= 5 && restored[entry.employee_id]) {
+        restored[entry.employee_id][String(offset)] = entry.shift_code;
+      }
+    }
+    setGrid(applyPTOToGrid(restored));
+    setStatus("Draft");
+    setShowHistory(false);
+    setMessage("Previous version restored for review. Click Save Schedule to keep it.");
   }
 
   async function copyShareLink() {
@@ -1154,6 +1234,15 @@ export default function SchedulePage() {
         </div>
 
         <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => void loadHistory()}
+            disabled={loading || !scheduleId}
+            className="rounded-lg border border-slate-300 px-4 py-2 font-medium hover:bg-slate-50 disabled:opacity-50"
+          >
+            History
+          </button>
+
           <button
             type="button"
             onClick={() => moveWeek(-7)}
@@ -1321,6 +1410,20 @@ export default function SchedulePage() {
           </button>
         </div>
       </div>
+
+      {showHistory && (
+        <div className="rounded-xl border border-slate-200 bg-white p-5 shadow">
+          <div className="flex items-center justify-between"><div><h2 className="text-xl font-bold">Schedule history</h2><p className="text-sm text-slate-500">Restore a previous saved version, then review and save it.</p></div><button onClick={()=>setShowHistory(false)} className="rounded-lg border px-3 py-2">Close</button></div>
+          <div className="mt-4 divide-y">
+            {versions.length ? versions.map(version => (
+              <div key={version.id} className="flex items-center justify-between gap-4 py-3">
+                <div><p className="font-semibold">{version.version_label}</p><p className="text-sm text-slate-500">{new Date(version.created_at).toLocaleString()} · {version.schedule_status}</p></div>
+                <button onClick={()=>restoreVersion(version)} className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-semibold text-white">Restore</button>
+              </div>
+            )) : <p className="py-4 text-slate-500">No earlier versions yet.</p>}
+          </div>
+        </div>
+      )}
 
       {loading ? (
         <div className="rounded-xl bg-white p-6 shadow">Loading schedule...</div>

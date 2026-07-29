@@ -12,6 +12,7 @@ export default function LoginPage() {
   const [fullName, setFullName] = useState("");
   const [storeName, setStoreName] = useState("");
   const [storeNumber, setStoreNumber] = useState("");
+  const [inviteCode, setInviteCode] = useState("");
   const [nextRoute, setNextRoute] = useState("/dashboard");
   const [checking, setChecking] = useState(true);
   const [submitting, setSubmitting] = useState(false);
@@ -22,6 +23,11 @@ export default function LoginPage() {
     const params = new URLSearchParams(window.location.search);
     const requestedRoute = params.get("next");
     const emailConfirmed = params.get("confirmed") === "1";
+    const invited = params.get("invite") || "";
+    if (invited) {
+      setInviteCode(invited);
+      setMode("signup");
+    }
     const safeNext =
       requestedRoute?.startsWith("/") && !requestedRoute.startsWith("//")
         ? requestedRoute
@@ -49,8 +55,8 @@ export default function LoginPage() {
     setMessage("");
 
     if (mode === "signup") {
-      if (!fullName.trim() || !storeName.trim()) {
-        setErrorMessage("Your name and store name are required.");
+      if (!fullName.trim() || (!inviteCode && !storeName.trim())) {
+        setErrorMessage(inviteCode ? "Your name is required." : "Your name and store name are required.");
         setSubmitting(false);
         return;
       }
@@ -64,6 +70,7 @@ export default function LoginPage() {
             full_name: fullName.trim(),
             store_name: storeName.trim(),
             store_number: storeNumber.trim() || null,
+            invite_code: inviteCode || null,
           },
         },
       });
@@ -171,7 +178,7 @@ export default function LoginPage() {
                   placeholder="Manager name"
                 />
               </label>
-              <label className="block">
+              {!inviteCode && <label className="block">
                 <span className="text-sm font-medium">Store or business name</span>
                 <input
                   required
@@ -180,8 +187,8 @@ export default function LoginPage() {
                   className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-3"
                   placeholder="Example: Magee Store"
                 />
-              </label>
-              <label className="block">
+              </label>}
+              {!inviteCode && <label className="block">
                 <span className="text-sm font-medium">Store number (optional)</span>
                 <input
                   value={storeNumber}
@@ -189,7 +196,12 @@ export default function LoginPage() {
                   className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-3"
                   placeholder="Optional"
                 />
-              </label>
+              </label>}
+              {inviteCode && (
+                <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-sm text-blue-800">
+                  You’re joining an existing store. Enter the exact email address that received this invitation.
+                </div>
+              )}
             </>
           )}
 
@@ -231,6 +243,13 @@ export default function LoginPage() {
                 : "Create Private Workspace"}
           </button>
         </form>
+        {mode === "signin" && (
+          <div className="mt-4 text-center">
+            <a href="/forgot-password" className="text-sm font-semibold text-blue-700 hover:underline">
+              Forgot your password?
+            </a>
+          </div>
+        )}
       </div>
     </div>
   );

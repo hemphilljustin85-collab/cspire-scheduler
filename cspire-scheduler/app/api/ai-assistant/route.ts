@@ -170,7 +170,7 @@ async function loadSnapshot(authorization: string) {
     ),
     supabaseRequest<unknown[]>(
       authorization,
-      `schedules?select=id,week_start,status,schedule_entries(employee_id,shift_date,shift_code)&week_start=gte.${scheduleStart}&order=week_start.asc&limit=12`,
+      `schedules?select=id,week_start,status,schedule_entries(employee_id,shift_date,shift_code,hours)&week_start=gte.${scheduleStart}&order=week_start.asc&limit=12`,
     ),
   ]);
 
@@ -223,6 +223,7 @@ async function askFreeHelper(
         employee_id: string;
         shift_date: string;
         shift_code: string;
+        hours?: number;
       }>;
     }>;
   };
@@ -363,6 +364,27 @@ async function askFreeHelper(
       reply: schedule
         ? `The next saved schedule starts ${schedule.week_start}, is ${schedule.status}, and contains ${schedule.schedule_entries?.length || 0} assignments.`
         : "No upcoming saved schedule was found.",
+      description: "",
+      payload: {},
+    };
+  }
+
+  if (lower.includes("hour")) {
+    const schedule = data.schedules[0];
+    if (!schedule) return { type: "answer", reply: "No upcoming schedule was found.", description: "", payload: {} };
+    const names = new Map(data.employees.map((employee) => [employee.id, employee.employee_name]));
+    const totals = new Map<string, number>();
+    for (const entry of schedule.schedule_entries || []) {
+      totals.set(entry.employee_id, (totals.get(entry.employee_id) || 0) + Number(entry.hours || 0));
+    }
+    const requestedLimit = Number(lower.match(/(?:under|below)\s+(\d+(?:\.\d+)?)/)?.[1] || 0);
+    const lines = [...totals.entries()]
+      .filter(([, hours]) => !requestedLimit || hours < requestedLimit)
+      .sort((a, b) => b[1] - a[1])
+      .map(([id, hours]) => `${names.get(id) || "Employee"}: ${hours.toFixed(2)} hours`);
+    return {
+      type: "answer",
+      reply: lines.length ? lines.join("\n") : requestedLimit ? `No one is below ${requestedLimit} hours.` : "No scheduled hours were found.",
       description: "",
       payload: {},
     };

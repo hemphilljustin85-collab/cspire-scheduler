@@ -34,6 +34,8 @@ export default function AIAssistant() {
     "Check this schedule for fairness.",
     "How many hours is everyone working?",
     "Show me the current scheduling rules.",
+    "Give an employee Friday off next week.",
+    "Add employee John Smith as Repair Tech.",
   ];
 
   function scrollToBottom() {
@@ -149,6 +151,7 @@ export default function AIAssistant() {
           text: data.reply || "The change was saved.",
         },
       ]);
+      window.setTimeout(() => window.location.reload(), 900);
     } catch (error) {
       setMessages((current) => [
         ...current,
