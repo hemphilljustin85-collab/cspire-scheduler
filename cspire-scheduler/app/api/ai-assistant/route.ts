@@ -177,98 +177,203 @@ async function loadSnapshot(authorization: string) {
   return { today: start, employees, pto, rules, schedules };
 }
 
-async function askOpenAI(
+function weekdayDate(dayName: string, nextWeek: boolean) {
+  const weekdays: Record<string, number> = {
+    sunday: 0,
+    monday: 1,
+    tuesday: 2,
+    wednesday: 3,
+    thursday: 4,
+    friday: 5,
+    saturday: 6,
+  };
+  const target = weekdays[dayName.toLowerCase()];
+  const date = new Date();
+  date.setHours(12, 0, 0, 0);
+  const distance = (target - date.getDay() + 7) % 7;
+  date.setDate(date.getDate() + distance + (nextWeek ? 7 : 0));
+  return date.toISOString().slice(0, 10);
+}
+
+async function askFreeHelper(
   message: string,
-  pathname: string,
-  history: Array<{ role: string; text: string }>,
+  _pathname: string,
+  _history: Array<{ role: string; text: string }>,
   snapshot: unknown,
 ) {
-  const apiKey = environment("OPENAI_API_KEY");
-
-  const instructions = `
-You are an AI manager assistant inside a workforce scheduling application.
-Today is ${today()}.
-The manager is currently viewing ${pathname}.
-
-You receive a snapshot of employees, PTO, scheduling rules, schedules, and schedule entries.
-Answer questions accurately from that snapshot.
-
-You may propose ONE of these write actions:
-- add_employee
-- update_employee
-- add_pto
-- add_rule
-- change_shift
-
-Never claim a write happened. Writes require manager approval.
-For read-only questions, use type "answer".
-For unsupported requests, use type "answer" and explain what the app can and cannot do.
-
-Dates must be YYYY-MM-DD.
-Shift codes must be one of: ${SHIFT_CODES.join(", ")}.
-For change_shift, include employee, shift_date, and shift_code.
-For add_pto, include employee, start_date, end_date, reason, status.
-For add_employee, include employee_name, employee_id, position, status, hire_date.
-For update_employee, include employee plus only the fields to change.
-For add_rule, include employee (optional), rule_type, rule_value, start_date, end_date.
-
-Return only valid JSON with this exact shape:
-{
-  "type": "answer or action name",
-  "reply": "helpful response to the manager",
-  "description": "plain English description of the proposed change, blank for answer",
-  "payload": {}
-}
-`;
-
-  const input = JSON.stringify({
-    manager_message: message,
-    recent_history: history,
-    current_data: snapshot,
-  });
-
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: process.env.OPENAI_MODEL || "gpt-5-mini",
-      instructions,
-      input,
-      max_output_tokens: 1200,
-    }),
-  });
-
-  if (!response.ok) {
-    throw new Error(`OpenAI request failed: ${await response.text()}`);
-  }
-
-  const data = (await response.json()) as {
-    output_text?: string;
-    output?: Array<{
-      content?: Array<{ type?: string; text?: string }>;
+  const data = snapshot as {
+    employees: Array<{
+      id: string;
+      employee_name: string;
+      employee_id?: string | null;
+      position?: string | null;
+      status?: string | null;
+    }>;
+    pto: Array<{
+      employee_id: string;
+      start_date: string;
+      end_date: string;
+      status?: string | null;
+    }>;
+    rules: Array<{ rule_type: string; rule_value: string }>;
+    schedules: Array<{
+      week_start: string;
+      status: string;
+      schedule_entries?: Array<{
+        employee_id: string;
+        shift_date: string;
+        shift_code: string;
+      }>;
     }>;
   };
+  const text = message.trim();
+  const lower = text.toLowerCase();
 
-  const outputText =
-    data.output_text ||
-    data.output
-      ?.flatMap((item) => item.content || [])
-      .map((item) => item.text || "")
-      .join("") ||
-    "";
-
-  if (!outputText) {
-    throw new Error("The AI returned an empty response.");
+  const datedShift = text.match(
+    /(?:give|set|change)\s+(.+?)\s+(?:on\s+)?(\d{4}-\d{2}-\d{2})\s+(?:off|to\s+([a-z0-9-]+))/i,
+  );
+  if (datedShift) {
+    const shiftCode = lower.includes(`${datedShift[2]} off`)
+      ? "OFF"
+      : datedShift[3].toUpperCase();
+    return {
+      type: "change_shift",
+      reply: "I prepared that shift change for your approval.",
+      description: `Set ${datedShift[1]} to ${shiftCode} on ${datedShift[2]}.`,
+      payload: {
+        employee: datedShift[1],
+        shift_date: datedShift[2],
+        shift_code: shiftCode,
+      },
+    };
   }
 
-  return JSON.parse(cleanJson(outputText)) as {
-    type: string;
-    reply: string;
-    description?: string;
-    payload?: Record<string, unknown>;
+  const weekdayShift = text.match(
+    /(?:give|set|change)\s+(.+?)\s+(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+(off|to\s+[a-z0-9-]+)(?:\s+(next week))?/i,
+  );
+  if (weekdayShift) {
+    const shiftCode = weekdayShift[3].toLowerCase() === "off"
+      ? "OFF"
+      : weekdayShift[3].replace(/^to\s+/i, "").toUpperCase();
+    const shiftDate = weekdayDate(weekdayShift[2], Boolean(weekdayShift[4]));
+    return {
+      type: "change_shift",
+      reply: "I prepared that shift change for your approval.",
+      description: `Set ${weekdayShift[1]} to ${shiftCode} on ${shiftDate}.`,
+      payload: {
+        employee: weekdayShift[1],
+        shift_date: shiftDate,
+        shift_code: shiftCode,
+      },
+    };
+  }
+
+  const ptoAction = text.match(
+    /add\s+pto\s+for\s+(.+?)\s+from\s+(\d{4}-\d{2}-\d{2})\s+(?:through|to)\s+(\d{4}-\d{2}-\d{2})(?:\s+for\s+(.+))?$/i,
+  );
+  if (ptoAction) {
+    return {
+      type: "add_pto",
+      reply: "I prepared the PTO request for your approval.",
+      description: `Add approved PTO for ${ptoAction[1]} from ${ptoAction[2]} through ${ptoAction[3]}.`,
+      payload: {
+        employee: ptoAction[1],
+        start_date: ptoAction[2],
+        end_date: ptoAction[3],
+        reason: ptoAction[4] || null,
+        status: "Approved",
+      },
+    };
+  }
+
+  const employeeAction = text.match(
+    /add\s+(?:a\s+)?(?:new\s+)?employee(?:\s+named)?\s+(.+?)(?:\s+as\s+(.+))?$/i,
+  );
+  if (employeeAction) {
+    return {
+      type: "add_employee",
+      reply: "I prepared the new employee for your approval.",
+      description: `Add ${employeeAction[1]} as ${employeeAction[2] || "ASR II"}.`,
+      payload: {
+        employee_name: employeeAction[1],
+        position: employeeAction[2] || "ASR II",
+        status: "Active",
+      },
+    };
+  }
+
+  if (lower.includes("pto")) {
+    const employeeNames = new Map(
+      data.employees.map((employee) => [employee.id, employee.employee_name]),
+    );
+    const approved = data.pto.filter(
+      (item) => (item.status || "Approved").toLowerCase() === "approved",
+    );
+    return {
+      type: "answer",
+      reply: approved.length
+        ? approved
+            .map(
+              (item) =>
+                `${employeeNames.get(item.employee_id) || "Employee"}: ${item.start_date} through ${item.end_date}`,
+            )
+            .join("\n")
+        : "There is no approved upcoming PTO.",
+      description: "",
+      payload: {},
+    };
+  }
+
+  if (lower.includes("rule")) {
+    return {
+      type: "answer",
+      reply: data.rules.length
+        ? data.rules
+            .map((rule) => `${rule.rule_type}: ${rule.rule_value}`)
+            .join("\n")
+        : "No scheduling rules are currently saved.",
+      description: "",
+      payload: {},
+    };
+  }
+
+  if (lower.includes("employee") || lower.includes("staff") || lower.includes("team")) {
+    const active = data.employees.filter(
+      (employee) => (employee.status || "Active").toLowerCase() === "active",
+    );
+    return {
+      type: "answer",
+      reply: active.length
+        ? `${active.length} active employees:\n${active
+            .map(
+              (employee) =>
+                `${employee.employee_name}${employee.position ? ` — ${employee.position}` : ""}`,
+            )
+            .join("\n")}`
+        : "No active employees were found.",
+      description: "",
+      payload: {},
+    };
+  }
+
+  if (lower.includes("schedule") || lower.includes("fair")) {
+    const schedule = data.schedules[0];
+    return {
+      type: "answer",
+      reply: schedule
+        ? `The next saved schedule starts ${schedule.week_start}, is ${schedule.status}, and contains ${schedule.schedule_entries?.length || 0} assignments.`
+        : "No upcoming saved schedule was found.",
+      description: "",
+      payload: {},
+    };
+  }
+
+  return {
+    type: "answer",
+    reply:
+      "Free mode can list employees, PTO, rules, and upcoming schedules. It can also prepare changes such as “Give Sedrick Friday off next week,” “Add PTO for Shane from 2026-08-04 through 2026-08-06,” or “Add employee John Smith as Repair Tech.” I’ll always ask before saving a change.",
+    description: "",
+    payload: {},
   };
 }
 
@@ -408,16 +513,29 @@ async function executeAction(
       const shiftCode = String(payload.shift_code || "");
       const weekStart = mondayFor(shiftDate);
 
-      if (!shiftDate || !SHIFT_CODES.includes(shiftCode as never)) {
+      const builtInShift = SHIFT_CODES.includes(shiftCode as never);
+      const customShifts = builtInShift
+        ? []
+        : await supabaseRequest<Array<{ code: string }>>(
+            authorization,
+            `shift_templates?select=code&code=eq.${encodeURIComponent(shiftCode)}&active=eq.true&limit=1`,
+          );
+
+      if (!shiftDate || (!builtInShift && customShifts.length === 0)) {
         throw new Error("A valid date and shift code are required.");
       }
 
-      const normalizedShift = shiftCode as (typeof SHIFT_CODES)[number];
-      const shiftValues = {
-        shift_code: normalizedShift,
-        ...SHIFT_DETAILS[normalizedShift],
-        updated_at: new Date().toISOString(),
-      };
+      const normalizedShift = shiftCode.toUpperCase();
+      const shiftValues = builtInShift
+        ? {
+            shift_code: normalizedShift,
+            ...SHIFT_DETAILS[normalizedShift as (typeof SHIFT_CODES)[number]],
+            updated_at: new Date().toISOString(),
+          }
+        : {
+            shift_code: normalizedShift,
+            updated_at: new Date().toISOString(),
+          };
 
       const schedules = await supabaseRequest<Array<{ id: string }>>(
         authorization,
@@ -509,7 +627,7 @@ export async function POST(request: NextRequest) {
     }
 
     const snapshot = await loadSnapshot(authentication.authorization);
-    const result = await askOpenAI(
+    const result = await askFreeHelper(
       message,
       body.pathname || "/",
       body.history || [],

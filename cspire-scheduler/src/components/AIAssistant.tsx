@@ -25,7 +25,7 @@ export default function AIAssistant() {
     {
       role: "assistant",
       text:
-        "I’m your scheduling assistant. Ask about employees, schedules, PTO, rules, or tell me what you need changed.",
+        "I’m your free scheduling helper. Ask about employees, schedules, PTO, rules, or tell me what you need changed.",
     },
   ]);
   const endRef = useRef<HTMLDivElement | null>(null);
@@ -186,20 +186,20 @@ export default function AIAssistant() {
       <button
         type="button"
         onClick={() => setOpen((current) => !current)}
-        aria-label={open ? "Close AI assistant" : "Open AI assistant"}
+        aria-label={open ? "Close scheduling helper" : "Open scheduling helper"}
         className="fixed bottom-5 right-5 z-40 flex h-14 items-center gap-2 rounded-full bg-blue-600 px-5 font-semibold text-white shadow-xl transition hover:bg-blue-700 active:scale-95"
       >
         <span className="text-xl">✦</span>
-        <span className="hidden sm:inline">AI Assistant</span>
+        <span className="hidden sm:inline">Schedule Helper</span>
       </button>
 
       {open && (
         <section className="fixed inset-x-3 bottom-24 z-40 flex h-[70vh] max-h-[680px] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl sm:left-auto sm:right-5 sm:w-[410px]">
           <header className="flex items-center justify-between bg-slate-900 px-4 py-3 text-white">
             <div>
-              <h2 className="font-bold">AI Manager Assistant</h2>
+              <h2 className="font-bold">Schedule Helper</h2>
               <p className="text-xs text-slate-300">
-                Reads instantly • confirms before changes
+                Free mode · confirms before changes
               </p>
             </div>
 
@@ -207,7 +207,7 @@ export default function AIAssistant() {
               type="button"
               onClick={() => setOpen(false)}
               className="flex h-10 w-10 items-center justify-center rounded-lg text-2xl hover:bg-slate-800"
-              aria-label="Close AI assistant"
+              aria-label="Close scheduling helper"
             >
               ×
             </button>

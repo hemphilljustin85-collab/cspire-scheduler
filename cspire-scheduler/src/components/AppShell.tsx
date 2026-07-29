@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Sidebar from "./Sidebar";
+import AIAssistant from "./AIAssistant";
 import { supabase } from "../lib/supabase";
 import { getCurrentStore } from "../lib/store";
 
@@ -176,6 +177,7 @@ export default function AppShell({
         {children}
       </main>
 
+      <AIAssistant />
     </div>
   );
 }
