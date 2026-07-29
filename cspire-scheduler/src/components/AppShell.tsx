@@ -7,7 +7,13 @@ import AIAssistant from "./AIAssistant";
 import { supabase } from "../lib/supabase";
 import { getCurrentStore } from "../lib/store";
 
-const PUBLIC_ROUTES = ["/login", "/forgot-password", "/reset-password", "/team-schedule"];
+const PUBLIC_ROUTES = [
+  "/login",
+  "/auth/confirm",
+  "/forgot-password",
+  "/reset-password",
+  "/team-schedule",
+];
 
 function isPublicRoute(pathname: string) {
   return PUBLIC_ROUTES.some(
