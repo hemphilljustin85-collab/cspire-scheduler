@@ -21,11 +21,15 @@ export default function LoginPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const requestedRoute = params.get("next");
+    const emailConfirmed = params.get("confirmed") === "1";
     const safeNext =
       requestedRoute?.startsWith("/") && !requestedRoute.startsWith("//")
         ? requestedRoute
         : "/dashboard";
     setNextRoute(safeNext);
+    if (emailConfirmed) {
+      setMessage("Email confirmed successfully. You can sign in now.");
+    }
 
     async function checkSession() {
       const result = await supabase.auth.getSession();
@@ -55,6 +59,7 @@ export default function LoginPage() {
         email: email.trim(),
         password,
         options: {
+          emailRedirectTo: `${window.location.origin}/login?confirmed=1`,
           data: {
             full_name: fullName.trim(),
             store_name: storeName.trim(),
