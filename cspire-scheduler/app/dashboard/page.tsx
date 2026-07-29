@@ -293,6 +293,46 @@ export default function DashboardPage() {
     ["/reports", "Reports", "Print the weekly schedule and summary."],
   ];
 
+  const kpis = [
+    {
+      label: "Active Employees",
+      value: summary.activeEmployees,
+      detail: `${summary.scheduledEmployees} scheduled this week`,
+      icon: "●",
+      accent: "border-blue-500 bg-blue-50 text-blue-700",
+    },
+    {
+      label: "Scheduled Employees",
+      value: summary.scheduledEmployees,
+      detail: `${Math.max(summary.activeEmployees - summary.scheduledEmployees, 0)} not yet scheduled`,
+      icon: "▤",
+      accent: "border-cyan-500 bg-cyan-50 text-cyan-700",
+    },
+    {
+      label: "Scheduled Hours",
+      value: summary.totalHours.toFixed(2),
+      detail: `${summary.scheduledEmployees ? (summary.totalHours / summary.scheduledEmployees).toFixed(2) : "0.00"} average`,
+      icon: "◷",
+      accent: "border-emerald-500 bg-emerald-50 text-emerald-700",
+    },
+    {
+      label: "Approved PTO",
+      value: summary.approvedPTO,
+      detail: summary.approvedPTO ? "Review coverage" : "No PTO conflicts",
+      icon: "◆",
+      accent: "border-violet-500 bg-violet-50 text-violet-700",
+    },
+    {
+      label: "Fairness Alerts",
+      value: summary.alerts.length,
+      detail: summary.alerts.length ? "Needs manager review" : "Schedule looks balanced",
+      icon: "!",
+      accent: summary.alerts.length
+        ? "border-amber-500 bg-amber-50 text-amber-800"
+        : "border-green-500 bg-green-50 text-green-700",
+    },
+  ];
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
@@ -354,16 +394,27 @@ export default function DashboardPage() {
       ) : (
         <>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-            {[
-              ["Active Employees", summary.activeEmployees],
-              ["Scheduled Employees", summary.scheduledEmployees],
-              ["Scheduled Hours", summary.totalHours.toFixed(2)],
-              ["Approved PTO", summary.approvedPTO],
-              ["Active Rules", summary.activeRules],
-            ].map(([label, value]) => (
-              <div key={String(label)} className="rounded-xl bg-white p-5 shadow">
-                <div className="text-sm text-slate-500">{label}</div>
-                <div className="mt-1 text-3xl font-bold">{value}</div>
+            {kpis.map((kpi) => (
+              <div
+                key={kpi.label}
+                className={`rounded-xl border-l-4 bg-white p-5 shadow-sm ${kpi.accent.split(" ")[0]}`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-medium text-slate-500">{kpi.label}</div>
+                    <div className="mt-1 text-3xl font-bold text-slate-950">{kpi.value}</div>
+                  </div>
+                  <span
+                    aria-hidden="true"
+                    className={`flex h-10 w-10 items-center justify-center rounded-xl text-lg font-black ${kpi.accent
+                      .split(" ")
+                      .slice(1)
+                      .join(" ")}`}
+                  >
+                    {kpi.icon}
+                  </span>
+                </div>
+                <div className="mt-3 text-xs font-medium text-slate-500">{kpi.detail}</div>
               </div>
             ))}
           </div>

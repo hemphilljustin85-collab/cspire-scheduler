@@ -29,6 +29,12 @@ export default function AIAssistant() {
     },
   ]);
   const endRef = useRef<HTMLDivElement | null>(null);
+  const starterPrompts = [
+    "Who has PTO next week?",
+    "Check this schedule for fairness.",
+    "How many hours is everyone working?",
+    "Show me the current scheduling rules.",
+  ];
 
   function scrollToBottom() {
     window.setTimeout(() => {
@@ -208,6 +214,25 @@ export default function AIAssistant() {
           </header>
 
           <div className="flex-1 space-y-3 overflow-y-auto bg-slate-50 p-4">
+            {messages.length === 1 && (
+              <div className="mr-4 rounded-2xl border border-blue-100 bg-blue-50 p-3">
+                <p className="text-xs font-bold uppercase tracking-wide text-blue-700">
+                  Try asking
+                </p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {starterPrompts.map((prompt) => (
+                    <button
+                      key={prompt}
+                      type="button"
+                      onClick={() => setInput(prompt)}
+                      className="rounded-full border border-blue-200 bg-white px-3 py-1.5 text-left text-xs font-medium text-blue-800 hover:bg-blue-100"
+                    >
+                      {prompt}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
             {messages.map((message, index) => (
               <div
                 key={`${message.role}-${index}`}

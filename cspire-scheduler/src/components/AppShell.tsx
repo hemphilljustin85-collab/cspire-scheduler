@@ -128,7 +128,7 @@ export default function AppShell({
       <header className="sticky top-0 z-40 flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3 shadow-sm lg:hidden">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">
-            Manager Portal
+            Magee · Manager Portal
           </p>
           <h1 className="text-lg font-bold text-slate-900">
             Workforce Scheduler

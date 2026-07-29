@@ -14,6 +14,7 @@ type ScheduleRecord = {
   id: string;
   week_start: string;
   status: string;
+  updated_at: string | null;
 };
 
 type ShiftCode =
@@ -227,6 +228,7 @@ export default function SchedulePage() {
   const [weekStart, setWeekStart] = useState(getMonday());
   const [scheduleId, setScheduleId] = useState<string | null>(null);
   const [status, setStatus] = useState("Draft");
+  const [lastSaved, setLastSaved] = useState<string | null>(null);
   const [grid, setGrid] = useState<ScheduleGrid>({});
   const [rules, setRules] = useState<SchedulerRules>(DEFAULT_RULES);
   const [savedRules, setSavedRules] = useState<SavedRule[]>([]);
@@ -334,7 +336,7 @@ export default function SchedulePage() {
 
     const { data: schedule, error: scheduleError } = await supabase
       .from("schedules")
-      .select("id, week_start, status")
+      .select("id, week_start, status, updated_at")
       .eq("week_start", weekStart)
       .maybeSingle();
 
@@ -349,6 +351,7 @@ export default function SchedulePage() {
     if (!schedule) {
       setScheduleId(null);
       setStatus("Draft");
+      setLastSaved(null);
       setGrid(applyPTOToGrid(emptyGrid));
       setLoading(false);
       return;
@@ -357,6 +360,7 @@ export default function SchedulePage() {
     const scheduleRecord = schedule as ScheduleRecord;
     setScheduleId(scheduleRecord.id);
     setStatus(scheduleRecord.status || "Draft");
+    setLastSaved(scheduleRecord.updated_at);
 
     const { data: entries, error: entriesError } = await supabase
       .from("schedule_entries")
@@ -924,6 +928,7 @@ export default function SchedulePage() {
     }
 
     setMessage("Schedule and metrics saved successfully.");
+    setLastSaved(new Date().toISOString());
     setSaving(false);
   }
 
@@ -1014,6 +1019,7 @@ export default function SchedulePage() {
     }
 
     setStatus("Published");
+    setLastSaved(new Date().toISOString());
     setMessage(
       "Schedule published successfully. Employees can now view the read-only Team Schedule.",
     );
@@ -1252,6 +1258,17 @@ export default function SchedulePage() {
 
       <div className="flex flex-col gap-3 rounded-xl bg-white p-4 shadow sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-3">
+          <span
+            className={`inline-flex rounded-full px-3 py-1 text-xs font-black tracking-wide ${
+              status === "Published"
+                ? "bg-green-100 text-green-800 ring-1 ring-green-300"
+                : status === "Approved"
+                  ? "bg-blue-100 text-blue-800 ring-1 ring-blue-300"
+                  : "bg-amber-100 text-amber-800 ring-1 ring-amber-300"
+            }`}
+          >
+            {status.toUpperCase()}
+          </span>
           <label className="flex items-center gap-2">
             <span className="text-sm font-medium">Status</span>
             <select
@@ -1266,7 +1283,11 @@ export default function SchedulePage() {
           </label>
 
           <span className="text-sm text-slate-500">
-            {scheduleId ? "Saved week loaded" : "New unsaved week"}
+            {lastSaved
+              ? `Last saved ${new Date(lastSaved).toLocaleString()}`
+              : scheduleId
+                ? "Saved week loaded"
+                : "New unsaved week"}
           </span>
           <span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-semibold text-violet-800">
             Rules: {rules.openersPerDay} open · {rules.closersPerDay} close · {rules.targetHours} hrs · {savedRules.length} saved
@@ -1361,8 +1382,15 @@ export default function SchedulePage() {
                 <th className="sticky left-0 z-20 min-w-52 bg-slate-900 p-3 text-left">
                   Employee
                 </th>
-                {WORK_DAYS.map((day, index) => (
-                  <th key={day.name} className="min-w-36 p-3 text-center">
+                {WORK_DAYS.map((day, index) => {
+                  const isToday =
+                    addDays(weekStart, day.offset) === formatLocalDate(new Date());
+
+                  return (
+                  <th
+                    key={day.name}
+                    className={`min-w-36 p-3 text-center ${isToday ? "bg-blue-700 ring-2 ring-inset ring-blue-300" : ""}`}
+                  >
                     <div>{day.name}</div>
                     <div className="text-xs font-normal text-slate-300">
                       {displayDate(addDays(weekStart, day.offset))}
@@ -1372,7 +1400,8 @@ export default function SchedulePage() {
                       {dailyCoverage[index]?.closers ?? 0} close
                     </div>
                   </th>
-                ))}
+                  );
+                })}
                 <th className="min-w-24 p-3 text-center">Hours</th>
               </tr>
             </thead>

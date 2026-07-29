@@ -14,6 +14,7 @@ type Schedule = {
   id: string;
   week_start: string;
   status: string;
+  updated_at: string | null;
 };
 
 type ScheduleEntry = {
@@ -126,7 +127,7 @@ export default function TeamSchedulePage() {
         .order("employee_name"),
       supabase
         .from("schedules")
-        .select("id, week_start, status")
+        .select("id, week_start, status, updated_at")
         .eq("week_start", weekStart)
         .eq("status", "Published")
         .maybeSingle(),
@@ -207,26 +208,38 @@ export default function TeamSchedulePage() {
   return (
     <div className="min-h-screen bg-slate-100 p-4 sm:p-6">
       <div className="mx-auto max-w-7xl space-y-5">
-        <div className="rounded-xl bg-white p-5 shadow">
+        <div className="overflow-hidden rounded-2xl bg-slate-950 text-white shadow-xl">
+          <div className="h-1.5 bg-gradient-to-r from-blue-500 via-cyan-400 to-emerald-400" />
+          <div className="p-5 sm:p-7">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <p className="text-sm font-semibold uppercase tracking-wide text-blue-600">
-                Magee Store
+              <p className="text-sm font-semibold uppercase tracking-[0.2em] text-blue-300">
+                Magee Workforce Scheduler
               </p>
-              <h1 className="mt-1 text-3xl font-bold">
+              <h1 className="mt-2 text-3xl font-bold sm:text-4xl">
                 Team Schedule
               </h1>
-              <p className="mt-1 text-slate-600">
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <span className="rounded-full bg-green-400/15 px-3 py-1 text-xs font-bold uppercase tracking-wide text-green-300 ring-1 ring-green-400/30">
+                  Published
+                </span>
+                <p className="text-slate-300">
                 Published schedule for the week of{" "}
                 {prettyDate(weekStart)}.
-              </p>
+                </p>
+              </div>
+              {schedule?.updated_at && (
+                <p className="mt-2 text-xs text-slate-400">
+                  Last updated {new Date(schedule.updated_at).toLocaleString()}
+                </p>
+              )}
             </div>
 
             <div className="no-print flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={() => moveWeek(-7)}
-                className="rounded-lg border border-slate-300 bg-white px-4 py-2 hover:bg-slate-50"
+                className="rounded-lg border border-slate-600 bg-slate-900 px-4 py-2 hover:bg-slate-800"
               >
                 Previous Week
               </button>
@@ -234,7 +247,7 @@ export default function TeamSchedulePage() {
               <button
                 type="button"
                 onClick={() => moveWeek(7)}
-                className="rounded-lg border border-slate-300 bg-white px-4 py-2 hover:bg-slate-50"
+                className="rounded-lg border border-slate-600 bg-slate-900 px-4 py-2 hover:bg-slate-800"
               >
                 Next Week
               </button>
@@ -255,7 +268,7 @@ export default function TeamSchedulePage() {
                     window.alert("Schedule link copied to your clipboard.");
                   }
                 }}
-                className="rounded-lg border border-blue-300 bg-white px-4 py-2 font-medium text-blue-700 hover:bg-blue-50"
+                className="rounded-lg border border-blue-400 bg-blue-500/10 px-4 py-2 font-medium text-blue-200 hover:bg-blue-500/20"
               >
                 Share
               </button>
@@ -268,6 +281,10 @@ export default function TeamSchedulePage() {
                 Print
               </button>
             </div>
+          </div>
+          <p className="no-print mt-4 text-xs text-slate-400 sm:hidden">
+            Swipe left or right to view the full week.
+          </p>
           </div>
         </div>
 
@@ -291,6 +308,7 @@ export default function TeamSchedulePage() {
             </p>
           </div>
         ) : (
+          <>
           <div className="overflow-x-auto rounded-xl bg-white shadow">
             <table className="min-w-[1100px] w-full border-collapse">
               <thead>
@@ -363,6 +381,22 @@ export default function TeamSchedulePage() {
               </tbody>
             </table>
           </div>
+          <div className="rounded-xl bg-white p-4 shadow">
+            <p className="text-sm font-bold text-slate-900">Shift legend</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {["OFF", "PTO", "HOLIDAY", "815-530", "830-530", "900-600", "1030-715"].map(
+                (code) => (
+                  <span
+                    key={code}
+                    className={`rounded-full px-3 py-1 text-xs font-semibold ${shiftClass(code)}`}
+                  >
+                    {shiftLabel(code)}
+                  </span>
+                ),
+              )}
+            </div>
+          </div>
+          </>
         )}
       </div>
 

@@ -24,6 +24,19 @@ const SHIFT_CODES = [
   "1030-715",
 ] as const;
 
+const SHIFT_DETAILS: Record<
+  (typeof SHIFT_CODES)[number],
+  { start_time: string | null; end_time: string | null; hours: number }
+> = {
+  OFF: { start_time: null, end_time: null, hours: 0 },
+  PTO: { start_time: null, end_time: null, hours: 8 },
+  HOLIDAY: { start_time: null, end_time: null, hours: 8 },
+  "815-530": { start_time: "08:15", end_time: "17:30", hours: 8.25 },
+  "830-530": { start_time: "08:30", end_time: "17:30", hours: 8 },
+  "900-600": { start_time: "09:00", end_time: "18:00", hours: 8 },
+  "1030-715": { start_time: "10:30", end_time: "19:15", hours: 7.75 },
+};
+
 function environment(name: string) {
   const value = process.env[name];
   if (!value) throw new Error(`Missing server environment variable: ${name}`);
@@ -399,6 +412,13 @@ async function executeAction(
         throw new Error("A valid date and shift code are required.");
       }
 
+      const normalizedShift = shiftCode as (typeof SHIFT_CODES)[number];
+      const shiftValues = {
+        shift_code: normalizedShift,
+        ...SHIFT_DETAILS[normalizedShift],
+        updated_at: new Date().toISOString(),
+      };
+
       const schedules = await supabaseRequest<Array<{ id: string }>>(
         authorization,
         `schedules?select=id&week_start=eq.${weekStart}&limit=1`,
@@ -426,7 +446,7 @@ async function executeAction(
           `schedule_entries?id=eq.${encodeURIComponent(existing[0].id)}`,
           {
             method: "PATCH",
-            body: JSON.stringify({ shift_code: shiftCode }),
+            body: JSON.stringify(shiftValues),
           },
         );
       } else {
@@ -439,13 +459,13 @@ async function executeAction(
               schedule_id: scheduleId,
               employee_id: employee.id,
               shift_date: shiftDate,
-              shift_code: shiftCode,
+              ...shiftValues,
             }),
           },
         );
       }
 
-      return `Changed ${employee.employee_name} to ${shiftCode} on ${shiftDate}.`;
+      return `Changed ${employee.employee_name} to ${normalizedShift} on ${shiftDate}.`;
     }
 
     default:

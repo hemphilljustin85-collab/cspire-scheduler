@@ -5,15 +5,14 @@ import { usePathname, useRouter } from "next/navigation";
 import { supabase } from "../lib/supabase";
 
 const links = [
-  { name: "Home", href: "/" },
-  { name: "Dashboard", href: "/dashboard" },
-  { name: "Employees", href: "/employees" },
-  { name: "Schedule", href: "/schedule" },
-  { name: "Rules", href: "/rules" },
-  { name: "PTO", href: "/pto" },
-  { name: "Metrics", href: "/metrics" },
-  { name: "Reports", href: "/reports" },
-  { name: "Settings", href: "/settings" },
+  { name: "Dashboard", href: "/dashboard", icon: "▦" },
+  { name: "Employees", href: "/employees", icon: "●" },
+  { name: "Schedule", href: "/schedule", icon: "▤" },
+  { name: "PTO", href: "/pto", icon: "◷" },
+  { name: "Rules", href: "/rules", icon: "✓" },
+  { name: "Metrics", href: "/metrics", icon: "↗" },
+  { name: "Reports", href: "/reports", icon: "▥" },
+  { name: "Settings", href: "/settings", icon: "⚙" },
 ];
 
 type SidebarProps = {
@@ -47,11 +46,14 @@ export default function Sidebar({
     >
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">
-            Workforce Scheduler
+          <div className="mb-3 flex h-11 w-11 items-center justify-center rounded-xl bg-blue-600 text-xl font-black shadow-lg shadow-blue-950/30">
+            M
+          </div>
+          <h1 className="text-xl font-bold leading-tight">
+            Magee Workforce
           </h1>
           <p className="mt-1 text-sm text-slate-400">
-            Manager Portal
+            Scheduler · Manager Portal
           </p>
         </div>
 
@@ -80,12 +82,15 @@ export default function Sidebar({
                 <Link
                   href={link.href}
                   onClick={onNavigate}
-                  className={`block rounded-lg px-4 py-3 text-base font-medium transition ${
+                  className={`flex items-center gap-3 rounded-lg px-4 py-3 text-base font-medium transition ${
                     active
                       ? "bg-blue-600 text-white shadow"
                       : "text-slate-100 hover:bg-slate-800"
                   }`}
                 >
+                  <span aria-hidden="true" className="w-5 text-center text-lg text-blue-300">
+                    {link.icon}
+                  </span>
                   {link.name}
                 </Link>
               </li>
