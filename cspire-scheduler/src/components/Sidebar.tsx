@@ -1,14 +1,17 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { supabase } from "../lib/supabase";
+import { getCurrentStore } from "../lib/store";
 
 const links = [
   { name: "Dashboard", href: "/dashboard", icon: "▦" },
   { name: "Employees", href: "/employees", icon: "●" },
   { name: "Schedule", href: "/schedule", icon: "▤" },
   { name: "PTO", href: "/pto", icon: "◷" },
+  { name: "Custom Shifts", href: "/shifts", icon: "+" },
   { name: "Rules", href: "/rules", icon: "✓" },
   { name: "Metrics", href: "/metrics", icon: "↗" },
   { name: "Reports", href: "/reports", icon: "▥" },
@@ -28,6 +31,15 @@ export default function Sidebar({
 }: SidebarProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const [storeName, setStoreName] = useState("Workforce");
+  const [publicSlug, setPublicSlug] = useState("");
+
+  useEffect(() => {
+    void getCurrentStore().then((store) => {
+      setStoreName(store.store_name);
+      setPublicSlug(store.public_slug);
+    });
+  }, []);
 
   async function handleLogout() {
     await supabase.auth.signOut();
@@ -50,7 +62,7 @@ export default function Sidebar({
             M
           </div>
           <h1 className="text-xl font-bold leading-tight">
-            Magee Workforce
+            {storeName}
           </h1>
           <p className="mt-1 text-sm text-slate-400">
             Scheduler · Manager Portal
@@ -101,7 +113,7 @@ export default function Sidebar({
 
       <div className="mt-6 space-y-3 border-t border-slate-700 pt-5">
         <Link
-          href="/team-schedule"
+          href={publicSlug ? `/team-schedule?store=${encodeURIComponent(publicSlug)}` : "/team-schedule"}
           target="_blank"
           onClick={onNavigate}
           className="block rounded-lg border border-slate-700 px-4 py-3 text-center text-sm font-semibold text-slate-200 hover:bg-slate-800 hover:text-white"

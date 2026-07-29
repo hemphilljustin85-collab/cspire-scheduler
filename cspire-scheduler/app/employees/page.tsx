@@ -23,7 +23,6 @@ type EmployeeForm = {
   position: string;
   status: string;
   hire_date: string;
-  store_id: string;
   email: string;
   phone: string;
   notify_email: boolean;
@@ -36,7 +35,6 @@ const emptyForm: EmployeeForm = {
   position: "ASR II",
   status: "Active",
   hire_date: "",
-  store_id: "",
   email: "",
   phone: "",
   notify_email: true,
@@ -92,7 +90,6 @@ export default function EmployeesPage() {
       position: employee.position || "",
       status: employee.status || "Active",
       hire_date: employee.hire_date || "",
-      store_id: employee.store_id || "",
       email: employee.email || "",
       phone: employee.phone || "",
       notify_email: employee.notify_email ?? true,
@@ -129,7 +126,6 @@ export default function EmployeesPage() {
       position: form.position.trim() || null,
       status: form.status.trim() || "Active",
       hire_date: form.hire_date || null,
-      store_id: form.store_id.trim() || null,
       email: form.email.trim() || null,
       phone: form.phone.trim() || null,
       notify_email: form.notify_email,
@@ -337,7 +333,9 @@ export default function EmployeesPage() {
               >
                 <option value="Market Manager">Market Manager</option>
                 <option value="Store Manager">Store Manager</option>
+                <option value="Assistant Manager">Assistant Manager</option>
                 <option value="Team Leader">Team Leader</option>
+                <option value="Repair Tech">Repair Tech</option>
                 <option value="ASR II">ASR II</option>
                 <option value="ASR I">ASR I</option>
                 <option value="Part Time">Part Time</option>
@@ -371,17 +369,6 @@ export default function EmployeesPage() {
               />
             </label>
 
-            <label className="space-y-1">
-              <span className="text-sm font-medium">Store UUID</span>
-              <input
-                value={form.store_id}
-                onChange={(event) =>
-                  setForm({ ...form, store_id: event.target.value })
-                }
-                className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                placeholder="Leave blank for now"
-              />
-            </label>
           </div>
 
           <div className="mt-6 flex justify-end gap-3">

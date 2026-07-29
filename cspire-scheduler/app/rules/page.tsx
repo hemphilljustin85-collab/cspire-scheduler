@@ -23,7 +23,6 @@ type Employee = {
 };
 
 type RuleForm = {
-  store_id: string;
   employee_id: string;
   rule_type: string;
   rule_value: string;
@@ -32,7 +31,6 @@ type RuleForm = {
 };
 
 const emptyForm: RuleForm = {
-  store_id: "",
   employee_id: "",
   rule_type: "openers_per_day",
   rule_value: "2",
@@ -155,7 +153,6 @@ export default function RulesPage() {
   function openEditForm(rule: Rule) {
     setEditingRule(rule);
     setForm({
-      store_id: rule.store_id || "",
       employee_id: rule.employee_id || "",
       rule_type: rule.rule_type,
       rule_value: rule.rule_value,
@@ -187,7 +184,6 @@ export default function RulesPage() {
     setErrorMessage("");
 
     const payload = {
-      store_id: form.store_id.trim() || null,
       employee_id: form.employee_id.trim() || null,
       rule_type: form.rule_type.trim(),
       rule_value: form.rule_value.trim(),
@@ -369,18 +365,6 @@ export default function RulesPage() {
                   </option>
                 ))}
               </select>
-            </label>
-
-            <label className="space-y-1">
-              <span className="text-sm font-medium">Store UUID</span>
-              <input
-                value={form.store_id}
-                onChange={(event) =>
-                  setForm({ ...form, store_id: event.target.value })
-                }
-                className="w-full rounded-lg border border-slate-300 px-3 py-2"
-                placeholder="Optional"
-              />
             </label>
 
             <label className="space-y-1">

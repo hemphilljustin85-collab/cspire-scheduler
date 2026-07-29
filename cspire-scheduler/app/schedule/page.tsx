@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../src/lib/supabase";
+import { getCurrentStore } from "../../src/lib/store";
 
 type Employee = {
   id: string;
@@ -17,14 +18,7 @@ type ScheduleRecord = {
   updated_at: string | null;
 };
 
-type ShiftCode =
-  | "OFF"
-  | "PTO"
-  | "HOLIDAY"
-  | "815-530"
-  | "830-530"
-  | "900-600"
-  | "1030-715";
+type ShiftCode = string;
 
 type ScheduleGrid = Record<string, Record<string, ShiftCode>>;
 
@@ -176,8 +170,11 @@ function displayDate(value: string): string {
   });
 }
 
-function getShift(code: ShiftCode): ShiftDefinition {
-  return SHIFT_OPTIONS.find((shift) => shift.code === code) ?? SHIFT_OPTIONS[0];
+function getShift(
+  code: ShiftCode,
+  options: ShiftDefinition[] = SHIFT_OPTIONS,
+): ShiftDefinition {
+  return options.find((shift) => shift.code === code) ?? SHIFT_OPTIONS[0];
 }
 
 function makeEmptyGrid(employees: Employee[]): ScheduleGrid {
@@ -200,13 +197,19 @@ function normalizeDayName(value: string): number | null {
   return match >= 0 ? match : null;
 }
 
-function isShiftCode(value: string): value is ShiftCode {
-  return SHIFT_OPTIONS.some((shift) => shift.code === value);
+function isShiftCode(
+  value: string,
+  options: ShiftDefinition[] = SHIFT_OPTIONS,
+): value is ShiftCode {
+  return options.some((shift) => shift.code === value);
 }
 
-function parseShiftDayRule(value: string): ShiftDayRule | null {
+function parseShiftDayRule(
+  value: string,
+  options: ShiftDefinition[] = SHIFT_OPTIONS,
+): ShiftDayRule | null {
   const [shiftValue, dayValues] = value.split("|");
-  if (!shiftValue || !dayValues || !isShiftCode(shiftValue.trim())) return null;
+  if (!shiftValue || !dayValues || !isShiftCode(shiftValue.trim(), options)) return null;
   const days = dayValues.split(",").map(normalizeDayName).filter((day): day is number => day !== null);
   if (days.length === 0) return null;
   return { shift: shiftValue.trim() as ShiftCode, days };
@@ -240,11 +243,56 @@ export default function SchedulePage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [generationWarnings, setGenerationWarnings] = useState<string[]>([]);
   const [publishing, setPublishing] = useState(false);
-  const [notifying, setNotifying] = useState(false);
+  const [shiftOptions, setShiftOptions] =
+    useState<ShiftDefinition[]>(SHIFT_OPTIONS);
+  const [publicStoreSlug, setPublicStoreSlug] = useState("");
 
   useEffect(() => {
-    void Promise.all([loadEmployees(), loadRules(), loadPTO()]);
+    void Promise.all([loadEmployees(), loadRules(), loadPTO(), loadCustomShifts()]);
   }, []);
+
+  async function loadCustomShifts() {
+    const [{ data, error }, store] = await Promise.all([
+      supabase
+        .from("shift_templates")
+        .select("code, name, start_time, end_time, paid_hours, color")
+        .eq("active", true)
+        .order("start_time"),
+      getCurrentStore(),
+    ]);
+
+    setPublicStoreSlug(store.public_slug);
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    const colorClasses: Record<string, string> = {
+      cyan: "bg-cyan-100 text-cyan-800",
+      indigo: "bg-indigo-100 text-indigo-800",
+      pink: "bg-pink-100 text-pink-800",
+      orange: "bg-orange-100 text-orange-800",
+      teal: "bg-teal-100 text-teal-800",
+      lime: "bg-lime-100 text-lime-800",
+    };
+
+    const custom = ((data || []) as Array<{
+      code: string;
+      name: string;
+      start_time: string;
+      end_time: string;
+      paid_hours: number;
+      color: string;
+    }>).map((shift) => ({
+      code: shift.code,
+      label: shift.name,
+      start_time: shift.start_time,
+      end_time: shift.end_time,
+      hours: Number(shift.paid_hours),
+      className: colorClasses[shift.color] || colorClasses.cyan,
+    }));
+    setShiftOptions([...SHIFT_OPTIONS, ...custom]);
+  }
 
   useEffect(() => {
     if (employees.length > 0) {
@@ -467,8 +515,8 @@ export default function SchedulePage() {
 
     const generated = makeEmptyGrid(employees);
     const activeRules = savedRules.filter((rule) => ruleAppliesToWeek(rule, weekStart));
-    const allowedShiftDays = activeRules.filter((rule) => rule.rule_type === "allowed_days_for_shift").map((rule) => parseShiftDayRule(rule.rule_value)).filter((rule): rule is ShiftDayRule => rule !== null);
-    const blockedShiftDays = activeRules.filter((rule) => rule.rule_type === "blocked_days_for_shift").map((rule) => parseShiftDayRule(rule.rule_value)).filter((rule): rule is ShiftDayRule => rule !== null);
+    const allowedShiftDays = activeRules.filter((rule) => rule.rule_type === "allowed_days_for_shift").map((rule) => parseShiftDayRule(rule.rule_value, shiftOptions)).filter((rule): rule is ShiftDayRule => rule !== null);
+    const blockedShiftDays = activeRules.filter((rule) => rule.rule_type === "blocked_days_for_shift").map((rule) => parseShiftDayRule(rule.rule_value, shiftOptions)).filter((rule): rule is ShiftDayRule => rule !== null);
     const employeeUnavailableDays = new Map<string, Set<number>>();
     const employeePreferredDaysOff = new Map<string, Set<number>>();
     const employeeRequiredShifts = new Map<string, Map<number, ShiftCode>>();
@@ -487,7 +535,7 @@ export default function SchedulePage() {
         const [dayValue, shiftValue] = rule.rule_value.split("|");
         const day = normalizeDayName(dayValue || "");
         const shift = (shiftValue || "").trim();
-        if (day !== null && isShiftCode(shift)) {
+        if (day !== null && isShiftCode(shift, shiftOptions)) {
           const existing = employeeRequiredShifts.get(rule.employee_id) ?? new Map<number, ShiftCode>();
           existing.set(day, shift);
           employeeRequiredShifts.set(rule.employee_id, existing);
@@ -638,7 +686,7 @@ export default function SchedulePage() {
     employees.forEach((employee) => {
       let currentHours = WORK_DAYS.reduce((total, day) => {
         const code = generated[employee.id][String(day.offset)] ?? "OFF";
-        return total + getShift(code).hours;
+        return total + getShift(code, shiftOptions).hours;
       }, 0);
 
       if (currentHours > rules.targetHours + 1) {
@@ -724,7 +772,7 @@ export default function SchedulePage() {
       const totalHours = WORK_DAYS.reduce((sum, day) => {
         const code =
           generatedWithPTO[employee.id]?.[String(day.offset)] ?? "OFF";
-        return sum + getShift(code).hours;
+        return sum + getShift(code, shiftOptions).hours;
       }, 0);
 
       const offDays = WORK_DAYS.filter(
@@ -781,7 +829,7 @@ export default function SchedulePage() {
           ? "PTO"
           : grid[employee.id]?.[String(day.offset)] ?? "OFF";
 
-        currentHours += getShift(code).hours;
+        currentHours += getShift(code, shiftOptions).hours;
 
         if (code === "OFF") {
           daysOff += 1;
@@ -874,7 +922,7 @@ export default function SchedulePage() {
     const entries = employees.flatMap((employee) =>
       WORK_DAYS.map((day) => {
         const code = grid[employee.id]?.[String(day.offset)] ?? "OFF";
-        const shift = getShift(code);
+        const shift = getShift(code, shiftOptions);
 
         return {
           schedule_id: activeScheduleId,
@@ -979,7 +1027,7 @@ export default function SchedulePage() {
       WORK_DAYS.map((day) => {
         const code =
           grid[employee.id]?.[String(day.offset)] ?? "OFF";
-        const shift = getShift(code);
+        const shift = getShift(code, shiftOptions);
 
         return {
           schedule_id: activeScheduleId,
@@ -1026,84 +1074,8 @@ export default function SchedulePage() {
     setPublishing(false);
   }
 
-  async function notifyEmployees() {
-    setNotifying(true);
-    setMessage("");
-    setErrorMessage("");
-
-    const {
-      data: { session },
-    } = await supabase.auth.getSession();
-
-    if (!session) {
-      setErrorMessage("Your manager session expired. Sign in again.");
-      setNotifying(false);
-      return false;
-    }
-
-    const response = await fetch("/api/notify-schedule", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${session.access_token}`,
-      },
-      body: JSON.stringify({
-        weekStart,
-      }),
-    });
-
-    const result = (await response.json()) as {
-      success?: boolean;
-      message?: string;
-      emailSent?: number;
-      smsSent?: number;
-      skipped?: number;
-      errors?: string[];
-    };
-
-    if (!response.ok || !result.success) {
-      setErrorMessage(
-        result.message ||
-          result.errors?.join(" | ") ||
-          "The schedule was published, but notifications could not be sent.",
-      );
-      setNotifying(false);
-      return false;
-    }
-
-    setMessage(
-      `Schedule notifications sent: ${result.emailSent || 0} email(s), ${
-        result.smsSent || 0
-      } text message(s), ${result.skipped || 0} skipped.`,
-    );
-    setNotifying(false);
-    return true;
-  }
-
-  async function publishAndNotify() {
-    await publishSchedule();
-
-    // Confirm the database now has this week marked Published before notifying.
-    const { data, error } = await supabase
-      .from("schedules")
-      .select("id")
-      .eq("week_start", weekStart)
-      .eq("status", "Published")
-      .maybeSingle();
-
-    if (error || !data) {
-      setErrorMessage(
-        error?.message ||
-          "The schedule was not confirmed as published, so notifications were not sent.",
-      );
-      return;
-    }
-
-    await notifyEmployees();
-  }
-
   async function copyShareLink() {
-    const shareUrl = `${window.location.origin}/team-schedule?week=${weekStart}`;
+    const shareUrl = `${window.location.origin}/team-schedule?store=${encodeURIComponent(publicStoreSlug)}&week=${weekStart}`;
 
     try {
       await navigator.clipboard.writeText(shareUrl);
@@ -1134,7 +1106,7 @@ export default function SchedulePage() {
     for (const employee of employees) {
       totals[employee.id] = WORK_DAYS.reduce((sum, day) => {
         const code = grid[employee.id]?.[String(day.offset)] ?? "OFF";
-        return sum + getShift(code).hours;
+        return sum + getShift(code, shiftOptions).hours;
       }, 0);
     }
 
@@ -1309,23 +1281,6 @@ export default function SchedulePage() {
 
           <button
             type="button"
-            onClick={() => void publishAndNotify()}
-            disabled={
-              loading ||
-              saving ||
-              publishing ||
-              notifying ||
-              employees.length === 0
-            }
-            className="rounded-lg bg-fuchsia-600 px-4 py-2 font-medium text-white hover:bg-fuchsia-700 disabled:opacity-50"
-          >
-            {publishing || notifying
-              ? "Publishing & Notifying..."
-              : "Publish & Notify"}
-          </button>
-
-          <button
-            type="button"
             onClick={() => void publishSchedule()}
             disabled={
               loading ||
@@ -1419,7 +1374,7 @@ export default function SchedulePage() {
                   {WORK_DAYS.map((day) => {
                     const code =
                       grid[employee.id]?.[String(day.offset)] ?? "OFF";
-                    const shift = getShift(code);
+                    const shift = getShift(code, shiftOptions);
                     const approvedPTO = isApprovedPTO(employee.id, day.offset);
 
                     return (
@@ -1437,7 +1392,7 @@ export default function SchedulePage() {
                           className={`w-full rounded-lg border border-slate-300 px-2 py-2 text-sm font-medium ${shift.className} ${approvedPTO ? "cursor-not-allowed opacity-80 ring-2 ring-purple-300" : ""}`}
                           title={approvedPTO ? "Approved PTO — manage this on the PTO page" : undefined}
                         >
-                          {SHIFT_OPTIONS.map((option) => (
+                          {shiftOptions.map((option) => (
                             <option key={option.code} value={option.code}>
                               {option.label}
                             </option>
@@ -1484,7 +1439,7 @@ export default function SchedulePage() {
       <div className="rounded-xl bg-white p-5 shadow">
         <h2 className="text-lg font-bold">Shift legend</h2>
         <div className="mt-3 flex flex-wrap gap-2">
-          {SHIFT_OPTIONS.map((shift) => (
+          {shiftOptions.map((shift) => (
             <span
               key={shift.code}
               className={`rounded-full px-3 py-1 text-sm font-medium ${shift.className}`}

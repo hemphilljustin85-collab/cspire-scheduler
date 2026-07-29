@@ -3,423 +3,141 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../src/lib/supabase";
 
-type Employee = {
-  id: string;
-  employee_name: string;
-  position: string | null;
-  status: string | null;
+type Employee = { id: string; employee_name: string; position: string | null; status: string | null };
+type Schedule = { id: string; week_start: string; status: string; updated_at: string | null };
+type ScheduleEntry = { employee_id: string; shift_date: string; shift_code: string; hours: number };
+type PublicShift = { code: string; name: string; color: string };
+type PublicPayload = {
+  store: { name: string; slug: string };
+  schedule: Schedule;
+  employees: Employee[];
+  entries: ScheduleEntry[];
+  shifts: PublicShift[];
 };
 
-type Schedule = {
-  id: string;
-  week_start: string;
-  status: string;
-  updated_at: string | null;
+const WORK_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const builtInLabels: Record<string, string> = {
+  OFF: "OFF", PTO: "PTO", HOLIDAY: "Holiday", "815-530": "8:15–5:30",
+  "830-530": "8:30–5:30", "900-600": "9:00–6:00", "1030-715": "10:30–7:15",
 };
-
-type ScheduleEntry = {
-  employee_id: string;
-  shift_date: string;
-  shift_code: string;
-  hours: number;
+const builtInClasses: Record<string, string> = {
+  OFF: "bg-slate-100 text-slate-700", PTO: "bg-purple-100 text-purple-800",
+  HOLIDAY: "bg-amber-100 text-amber-800", "815-530": "bg-green-100 text-green-800",
+  "830-530": "bg-emerald-100 text-emerald-800", "900-600": "bg-blue-100 text-blue-800",
+  "1030-715": "bg-red-100 text-red-800",
 };
-
-const WORK_DAYS = [
-  { name: "Monday", offset: 0 },
-  { name: "Tuesday", offset: 1 },
-  { name: "Wednesday", offset: 2 },
-  { name: "Thursday", offset: 3 },
-  { name: "Friday", offset: 4 },
-  { name: "Saturday", offset: 5 },
-];
+const customClasses: Record<string, string> = {
+  cyan: "bg-cyan-100 text-cyan-800", indigo: "bg-indigo-100 text-indigo-800",
+  pink: "bg-pink-100 text-pink-800", orange: "bg-orange-100 text-orange-800",
+  teal: "bg-teal-100 text-teal-800", lime: "bg-lime-100 text-lime-800",
+};
 
 function formatDate(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
-
 function parseDate(value: string) {
   const [year, month, day] = value.split("-").map(Number);
   return new Date(year, month - 1, day);
 }
-
 function addDays(value: string, amount: number) {
-  const date = parseDate(value);
-  date.setDate(date.getDate() + amount);
-  return formatDate(date);
+  const date = parseDate(value); date.setDate(date.getDate() + amount); return formatDate(date);
 }
-
-function getMonday(date = new Date()) {
-  const copy = new Date(date);
-  const day = copy.getDay();
-  copy.setDate(copy.getDate() + (day === 0 ? -6 : 1 - day));
-  return formatDate(copy);
+function getMonday() {
+  const date = new Date(); const day = date.getDay(); date.setDate(date.getDate() + (day === 0 ? -6 : 1 - day)); return formatDate(date);
 }
-
 function prettyDate(value: string) {
-  return parseDate(value).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
-}
-
-function shiftLabel(code: string) {
-  const labels: Record<string, string> = {
-    OFF: "OFF",
-    PTO: "PTO",
-    HOLIDAY: "Holiday",
-    "815-530": "8:15–5:30",
-    "830-530": "8:30–5:30",
-    "900-600": "9:00–6:00",
-    "1030-715": "10:30–7:15",
-  };
-
-  return labels[code] || code;
-}
-
-function shiftClass(code: string) {
-  const classes: Record<string, string> = {
-    OFF: "bg-slate-100 text-slate-700",
-    PTO: "bg-purple-100 text-purple-800",
-    HOLIDAY: "bg-amber-100 text-amber-800",
-    "815-530": "bg-green-100 text-green-800",
-    "830-530": "bg-emerald-100 text-emerald-800",
-    "900-600": "bg-blue-100 text-blue-800",
-    "1030-715": "bg-red-100 text-red-800",
-  };
-
-  return classes[code] || "bg-slate-100 text-slate-700";
+  return parseDate(value).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
 export default function TeamSchedulePage() {
   const [weekStart, setWeekStart] = useState(getMonday());
-  const [employees, setEmployees] = useState<Employee[]>([]);
-  const [schedule, setSchedule] = useState<Schedule | null>(null);
-  const [entries, setEntries] = useState<ScheduleEntry[]>([]);
+  const [storeSlug, setStoreSlug] = useState("");
+  const [payload, setPayload] = useState<PublicPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState("");
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const requestedWeek = params.get("week");
-
-    if (requestedWeek) {
-      setWeekStart(requestedWeek);
-    }
+    setStoreSlug(params.get("store") || "");
+    setWeekStart(params.get("week") || getMonday());
   }, []);
 
   useEffect(() => {
-    void loadPublishedSchedule();
-  }, [weekStart]);
+    if (!storeSlug) {
+      setLoading(false);
+      return;
+    }
+    void loadSchedule();
+  }, [storeSlug, weekStart]);
 
-  async function loadPublishedSchedule() {
+  async function loadSchedule() {
     setLoading(true);
     setErrorMessage("");
-
-    const [employeeResult, scheduleResult] = await Promise.all([
-      supabase
-        .from("employees")
-        .select("id, employee_name, position, status")
-        .or("status.eq.Active,status.is.null")
-        .order("employee_name"),
-      supabase
-        .from("schedules")
-        .select("id, week_start, status, updated_at")
-        .eq("week_start", weekStart)
-        .eq("status", "Published")
-        .maybeSingle(),
-    ]);
-
-    if (employeeResult.error || scheduleResult.error) {
-      setErrorMessage(
-        employeeResult.error?.message ||
-          scheduleResult.error?.message ||
-          "Unable to load the published schedule.",
-      );
-      setLoading(false);
-      return;
-    }
-
-    setEmployees((employeeResult.data as Employee[]) || []);
-
-    if (!scheduleResult.data) {
-      setSchedule(null);
-      setEntries([]);
-      setLoading(false);
-      return;
-    }
-
-    const publishedSchedule = scheduleResult.data as Schedule;
-    setSchedule(publishedSchedule);
-
-    const { data, error } = await supabase
-      .from("schedule_entries")
-      .select("employee_id, shift_date, shift_code, hours")
-      .eq("schedule_id", publishedSchedule.id);
-
-    if (error) {
-      setErrorMessage(error.message);
-      setLoading(false);
-      return;
-    }
-
-    setEntries((data as ScheduleEntry[]) || []);
+    const { data, error } = await supabase.rpc("get_public_team_schedule", {
+      p_store_slug: storeSlug,
+      p_week_start: weekStart,
+    });
+    if (error) setErrorMessage(error.message);
+    setPayload((data as PublicPayload | null) || null);
     setLoading(false);
   }
 
-  function moveWeek(days: number) {
-    const nextWeek = addDays(weekStart, days);
-    setWeekStart(nextWeek);
-    window.history.replaceState(
-      null,
-      "",
-      `/team-schedule?week=${nextWeek}`,
-    );
+  function moveWeek(amount: number) {
+    const next = addDays(weekStart, amount);
+    setWeekStart(next);
+    window.history.replaceState(null, "", `/team-schedule?store=${encodeURIComponent(storeSlug)}&week=${next}`);
   }
 
-  function getEntry(employeeId: string, offset: number) {
-    const date = addDays(weekStart, offset);
+  const shiftMap = useMemo(() => {
+    const map = new Map<string, { label: string; className: string }>();
+    Object.keys(builtInLabels).forEach((code) => map.set(code, { label: builtInLabels[code], className: builtInClasses[code] }));
+    (payload?.shifts || []).forEach((shift) => map.set(shift.code, { label: shift.name, className: customClasses[shift.color] || customClasses.cyan }));
+    return map;
+  }, [payload]);
 
-    return entries.find(
-      (entry) =>
-        entry.employee_id === employeeId &&
-        entry.shift_date === date,
-    );
-  }
-
-  const employeeHours = useMemo(() => {
+  const hours = useMemo(() => {
     const totals: Record<string, number> = {};
-
-    for (const employee of employees) {
-      totals[employee.id] = entries
-        .filter((entry) => entry.employee_id === employee.id)
-        .reduce(
-          (sum, entry) => sum + Number(entry.hours || 0),
-          0,
-        );
-    }
-
+    (payload?.entries || []).forEach((entry) => { totals[entry.employee_id] = (totals[entry.employee_id] || 0) + Number(entry.hours || 0); });
     return totals;
-  }, [employees, entries]);
+  }, [payload]);
 
   return (
     <div className="min-h-screen bg-slate-100 p-4 sm:p-6">
       <div className="mx-auto max-w-7xl space-y-5">
-        <div className="overflow-hidden rounded-2xl bg-slate-950 text-white shadow-xl">
+        <header className="overflow-hidden rounded-2xl bg-slate-950 text-white shadow-xl">
           <div className="h-1.5 bg-gradient-to-r from-blue-500 via-cyan-400 to-emerald-400" />
-          <div className="p-5 sm:p-7">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+          <div className="flex flex-col gap-4 p-5 sm:p-7 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.2em] text-blue-300">
-                Magee Workforce Scheduler
-              </p>
-              <h1 className="mt-2 text-3xl font-bold sm:text-4xl">
-                Team Schedule
-              </h1>
-              <div className="mt-3 flex flex-wrap items-center gap-2">
-                <span className="rounded-full bg-green-400/15 px-3 py-1 text-xs font-bold uppercase tracking-wide text-green-300 ring-1 ring-green-400/30">
-                  Published
-                </span>
-                <p className="text-slate-300">
-                Published schedule for the week of{" "}
-                {prettyDate(weekStart)}.
-                </p>
-              </div>
-              {schedule?.updated_at && (
-                <p className="mt-2 text-xs text-slate-400">
-                  Last updated {new Date(schedule.updated_at).toLocaleString()}
-                </p>
-              )}
+              <p className="text-sm font-semibold uppercase tracking-[0.2em] text-blue-300">{payload?.store.name || "Workforce Scheduler"}</p>
+              <h1 className="mt-2 text-3xl font-bold sm:text-4xl">Team Schedule</h1>
+              <p className="mt-2 text-slate-300">Week of {prettyDate(weekStart)}</p>
+              {payload?.schedule.updated_at && <p className="mt-1 text-xs text-slate-400">Last updated {new Date(payload.schedule.updated_at).toLocaleString()}</p>}
             </div>
-
             <div className="no-print flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => moveWeek(-7)}
-                className="rounded-lg border border-slate-600 bg-slate-900 px-4 py-2 hover:bg-slate-800"
-              >
-                Previous Week
-              </button>
-
-              <button
-                type="button"
-                onClick={() => moveWeek(7)}
-                className="rounded-lg border border-slate-600 bg-slate-900 px-4 py-2 hover:bg-slate-800"
-              >
-                Next Week
-              </button>
-
-              <button
-                type="button"
-                onClick={async () => {
-                  const shareData = {
-                    title: "Magee Store Team Schedule",
-                    text: `Published schedule for the week of ${prettyDate(weekStart)}.`,
-                    url: window.location.href,
-                  };
-
-                  if (navigator.share) {
-                    await navigator.share(shareData);
-                  } else {
-                    await navigator.clipboard.writeText(window.location.href);
-                    window.alert("Schedule link copied to your clipboard.");
-                  }
-                }}
-                className="rounded-lg border border-blue-400 bg-blue-500/10 px-4 py-2 font-medium text-blue-200 hover:bg-blue-500/20"
-              >
-                Share
-              </button>
-
-              <button
-                type="button"
-                onClick={() => window.print()}
-                className="rounded-lg bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700"
-              >
-                Print
-              </button>
+              <button onClick={() => moveWeek(-7)} className="rounded-lg border border-slate-600 px-4 py-2">Previous</button>
+              <button onClick={() => moveWeek(7)} className="rounded-lg border border-slate-600 px-4 py-2">Next</button>
+              <button onClick={() => void (navigator.share ? navigator.share({ title: `${payload?.store.name || "Store"} schedule`, url: window.location.href }) : navigator.clipboard.writeText(window.location.href))} className="rounded-lg bg-blue-600 px-4 py-2 font-semibold">Share</button>
+              <button onClick={() => window.print()} className="rounded-lg bg-white px-4 py-2 font-semibold text-slate-950">Print</button>
             </div>
           </div>
-          <p className="no-print mt-4 text-xs text-slate-400 sm:hidden">
-            Swipe left or right to view the full week.
-          </p>
-          </div>
-        </div>
+        </header>
 
-        {errorMessage && (
-          <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-red-800">
-            {errorMessage}
-          </div>
-        )}
-
-        {loading ? (
-          <div className="rounded-xl bg-white p-6 shadow">
-            Loading published schedule...
-          </div>
-        ) : !schedule ? (
-          <div className="rounded-xl bg-white p-8 text-center shadow">
-            <h2 className="text-2xl font-bold">
-              No published schedule
-            </h2>
-            <p className="mt-2 text-slate-600">
-              A manager has not published a schedule for this week yet.
-            </p>
-          </div>
-        ) : (
+        {!storeSlug && <div className="rounded-xl bg-white p-8 text-center shadow"><h2 className="text-2xl font-bold">Store link required</h2><p className="mt-2 text-slate-600">Ask your manager for the Team Schedule link for your store.</p></div>}
+        {errorMessage && <div className="rounded-lg bg-red-50 p-4 text-red-800">{errorMessage}</div>}
+        {loading ? <div className="rounded-xl bg-white p-6 shadow">Loading schedule...</div> : storeSlug && !payload ? (
+          <div className="rounded-xl bg-white p-8 text-center shadow"><h2 className="text-2xl font-bold">No published schedule</h2><p className="mt-2 text-slate-600">No published schedule was found for this store and week.</p></div>
+        ) : payload && (
           <>
-          <div className="overflow-x-auto rounded-xl bg-white shadow">
-            <table className="min-w-[1100px] w-full border-collapse">
-              <thead>
-                <tr className="bg-slate-900 text-white">
-                  <th className="sticky left-0 z-20 min-w-52 bg-slate-900 p-3 text-left">
-                    Employee
-                  </th>
-
-                  {WORK_DAYS.map((day) => (
-                    <th
-                      key={day.name}
-                      className="min-w-36 p-3 text-center"
-                    >
-                      <div>{day.name}</div>
-                      <div className="text-xs font-normal text-slate-300">
-                        {prettyDate(addDays(weekStart, day.offset))}
-                      </div>
-                    </th>
-                  ))}
-
-                  <th className="min-w-24 p-3 text-center">
-                    Hours
-                  </th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {employees.map((employee) => (
-                  <tr
-                    key={employee.id}
-                    className="border-b border-slate-200"
-                  >
-                    <td className="sticky left-0 z-10 bg-white p-3">
-                      <div className="font-semibold">
-                        {employee.employee_name}
-                      </div>
-                      <div className="text-xs text-slate-500">
-                        {employee.position || "Team Member"}
-                      </div>
-                    </td>
-
-                    {WORK_DAYS.map((day) => {
-                      const entry = getEntry(
-                        employee.id,
-                        day.offset,
-                      );
-                      const code = entry?.shift_code || "OFF";
-
-                      return (
-                        <td
-                          key={day.name}
-                          className="p-2 text-center"
-                        >
-                          <span
-                            className={`inline-flex rounded-md px-3 py-2 text-sm font-semibold ${shiftClass(
-                              code,
-                            )}`}
-                          >
-                            {shiftLabel(code)}
-                          </span>
-                        </td>
-                      );
-                    })}
-
-                    <td className="p-3 text-center font-bold">
-                      {(employeeHours[employee.id] || 0).toFixed(2)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="rounded-xl bg-white p-4 shadow">
-            <p className="text-sm font-bold text-slate-900">Shift legend</p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {["OFF", "PTO", "HOLIDAY", "815-530", "830-530", "900-600", "1030-715"].map(
-                (code) => (
-                  <span
-                    key={code}
-                    className={`rounded-full px-3 py-1 text-xs font-semibold ${shiftClass(code)}`}
-                  >
-                    {shiftLabel(code)}
-                  </span>
-                ),
-              )}
+            <div className="overflow-x-auto rounded-xl bg-white shadow">
+              <table className="min-w-[1100px] w-full border-collapse">
+                <thead><tr className="bg-slate-900 text-white"><th className="sticky left-0 z-20 min-w-52 bg-slate-900 p-3 text-left">Employee</th>{WORK_DAYS.map((day, index) => <th key={day} className="min-w-36 p-3 text-center"><div>{day}</div><div className="text-xs font-normal text-slate-300">{prettyDate(addDays(weekStart, index))}</div></th>)}<th className="p-3">Hours</th></tr></thead>
+                <tbody>{payload.employees.map((employee) => <tr key={employee.id} className="border-b"><td className="sticky left-0 bg-white p-3"><div className="font-semibold">{employee.employee_name}</div><div className="text-xs text-slate-500">{employee.position || "Team Member"}</div></td>{WORK_DAYS.map((day, index) => { const entry = payload.entries.find((item) => item.employee_id === employee.id && item.shift_date === addDays(weekStart, index)); const shift = shiftMap.get(entry?.shift_code || "OFF") || { label: entry?.shift_code || "OFF", className: "bg-slate-100 text-slate-700" }; return <td key={day} className="p-2 text-center"><span className={`inline-flex rounded-md px-3 py-2 text-sm font-semibold ${shift.className}`}>{shift.label}</span></td>; })}<td className="p-3 text-center font-bold">{(hours[employee.id] || 0).toFixed(2)}</td></tr>)}</tbody>
+              </table>
             </div>
-          </div>
+            <div className="rounded-xl bg-white p-4 shadow"><p className="text-sm font-bold">Shift legend</p><div className="mt-3 flex flex-wrap gap-2">{Array.from(shiftMap.entries()).map(([code, shift]) => <span key={code} className={`rounded-full px-3 py-1 text-xs font-semibold ${shift.className}`}>{shift.label}</span>)}</div></div>
           </>
         )}
       </div>
-
-      <style jsx global>{`
-        @media print {
-          body {
-            background: white !important;
-          }
-
-          .no-print {
-            display: none !important;
-          }
-
-          .shadow {
-            box-shadow: none !important;
-          }
-
-          @page {
-            size: landscape;
-            margin: 0.4in;
-          }
-        }
-      `}</style>
     </div>
   );
 }

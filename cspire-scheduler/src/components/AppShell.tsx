@@ -3,8 +3,8 @@
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import Sidebar from "./Sidebar";
-import AIAssistant from "./AIAssistant";
 import { supabase } from "../lib/supabase";
+import { getCurrentStore } from "../lib/store";
 
 const PUBLIC_ROUTES = ["/login", "/team-schedule"];
 
@@ -29,6 +29,7 @@ export default function AppShell({
   const [checkingSession, setCheckingSession] =
     useState(!publicRoute);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [storeName, setStoreName] = useState("Workforce");
 
   useEffect(() => {
     let mounted = true;
@@ -95,6 +96,12 @@ export default function AppShell({
     };
   }, [mobileMenuOpen]);
 
+  useEffect(() => {
+    if (!publicRoute && session) {
+      void getCurrentStore().then((store) => setStoreName(store.store_name));
+    }
+  }, [publicRoute, session]);
+
   if (publicRoute) {
     return <>{children}</>;
   }
@@ -128,7 +135,7 @@ export default function AppShell({
       <header className="sticky top-0 z-40 flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3 shadow-sm lg:hidden">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">
-            Magee · Manager Portal
+            {storeName} · Manager Portal
           </p>
           <h1 className="text-lg font-bold text-slate-900">
             Workforce Scheduler
@@ -169,7 +176,6 @@ export default function AppShell({
         {children}
       </main>
 
-      <AIAssistant />
     </div>
   );
 }
