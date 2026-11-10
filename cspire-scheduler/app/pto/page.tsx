@@ -253,16 +253,10 @@ export default function PTOPage() {
           <p className="font-semibold">PTO error</p>
           <p className="mt-1 text-sm">{errorMessage}</p>
 
-          {errorMessage.toLowerCase().includes("status") && (
-            <p className="mt-2 text-sm">
-              The employee_time_off table needs a status column.
-            </p>
-          )}
-
           {errorMessage.toLowerCase().includes("row-level security") && (
             <p className="mt-2 text-sm">
-              Supabase RLS is blocking this action. The employee_time_off table
-              needs select, insert, update, and delete policies.
+              Your account doesn&apos;t have permission to do this. Ask the
+              workspace owner to check your access on the Team page.
             </p>
           )}
         </div>

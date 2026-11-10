@@ -1,8 +1,21 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../src/lib/supabase";
 import { getCurrentStore } from "../../src/lib/store";
+import {
+  BUILT_IN_SHIFTS,
+  STATUS_SHIFTS,
+  STARTER_SHIFTS_HIDDEN,
+  STARTER_SHIFTS_RULE,
+  classifyShiftRoles,
+  customShiftToDefinition,
+  fallbackShift,
+  isWorkingCode,
+  type CustomShiftRow,
+  type ShiftDefinition,
+} from "../../src/lib/shifts";
 
 type Employee = {
   id: string;
@@ -68,73 +81,7 @@ const DEFAULT_RULES: SchedulerRules = {
   managerSaturdayGoal: 2,
 };
 
-type ShiftDefinition = {
-  code: ShiftCode;
-  label: string;
-  start_time: string | null;
-  end_time: string | null;
-  hours: number;
-  className: string;
-};
-
-const SHIFT_OPTIONS: ShiftDefinition[] = [
-  {
-    code: "OFF",
-    label: "OFF",
-    start_time: null,
-    end_time: null,
-    hours: 0,
-    className: "bg-slate-100 text-slate-700",
-  },
-  {
-    code: "PTO",
-    label: "PTO",
-    start_time: null,
-    end_time: null,
-    hours: 8,
-    className: "bg-purple-100 text-purple-800",
-  },
-  {
-    code: "HOLIDAY",
-    label: "Holiday",
-    start_time: null,
-    end_time: null,
-    hours: 8,
-    className: "bg-amber-100 text-amber-800",
-  },
-  {
-    code: "815-530",
-    label: "8:15–5:30",
-    start_time: "08:15",
-    end_time: "17:30",
-    hours: 8.25,
-    className: "bg-green-100 text-green-800",
-  },
-  {
-    code: "830-530",
-    label: "8:30–5:30",
-    start_time: "08:30",
-    end_time: "17:30",
-    hours: 8,
-    className: "bg-emerald-100 text-emerald-800",
-  },
-  {
-    code: "900-600",
-    label: "9:00–6:00",
-    start_time: "09:00",
-    end_time: "18:00",
-    hours: 8,
-    className: "bg-blue-100 text-blue-800",
-  },
-  {
-    code: "1030-715",
-    label: "10:30–7:15",
-    start_time: "10:30",
-    end_time: "19:15",
-    hours: 7.75,
-    className: "bg-red-100 text-red-800",
-  },
-];
+const SHIFT_OPTIONS: ShiftDefinition[] = BUILT_IN_SHIFTS;
 
 const WORK_DAYS = [
   { name: "Monday", offset: 0 },
@@ -182,7 +129,7 @@ function getShift(
   code: ShiftCode,
   options: ShiftDefinition[] = SHIFT_OPTIONS,
 ): ShiftDefinition {
-  return options.find((shift) => shift.code === code) ?? SHIFT_OPTIONS[0];
+  return options.find((shift) => shift.code === code) ?? fallbackShift(code);
 }
 
 function makeEmptyGrid(employees: Employee[]): ScheduleGrid {
@@ -251,11 +198,27 @@ export default function SchedulePage() {
   const [errorMessage, setErrorMessage] = useState("");
   const [generationWarnings, setGenerationWarnings] = useState<string[]>([]);
   const [publishing, setPublishing] = useState(false);
+  // Every shift the app knows about (used to display saved schedules).
   const [shiftOptions, setShiftOptions] =
     useState<ShiftDefinition[]>(SHIFT_OPTIONS);
+  const [customShifts, setCustomShifts] = useState<ShiftDefinition[]>([]);
+  const [starterShiftsHidden, setStarterShiftsHidden] = useState(false);
   const [publicStoreSlug, setPublicStoreSlug] = useState("");
   const [versions, setVersions] = useState<ScheduleVersion[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+
+  // Shifts a manager can pick and the generator can use.
+  const selectableShifts = useMemo(
+    () => [
+      ...STATUS_SHIFTS,
+      ...(starterShiftsHidden ? [] : BUILT_IN_SHIFTS.filter((shift) => shift.starter)),
+      ...customShifts,
+    ],
+    [customShifts, starterShiftsHidden],
+  );
+  const shiftRoles = useMemo(() => classifyShiftRoles(selectableShifts), [selectableShifts]);
+  const isOpener = (code: string) => shiftRoles.openers.includes(code);
+  const isCloser = (code: string) => shiftRoles.closers.includes(code);
 
   useEffect(() => {
     void Promise.all([loadEmployees(), loadRules(), loadPTO(), loadCustomShifts()]);
@@ -277,30 +240,8 @@ export default function SchedulePage() {
       return;
     }
 
-    const colorClasses: Record<string, string> = {
-      cyan: "bg-cyan-100 text-cyan-800",
-      indigo: "bg-indigo-100 text-indigo-800",
-      pink: "bg-pink-100 text-pink-800",
-      orange: "bg-orange-100 text-orange-800",
-      teal: "bg-teal-100 text-teal-800",
-      lime: "bg-lime-100 text-lime-800",
-    };
-
-    const custom = ((data || []) as Array<{
-      code: string;
-      name: string;
-      start_time: string;
-      end_time: string;
-      paid_hours: number;
-      color: string;
-    }>).map((shift) => ({
-      code: shift.code,
-      label: shift.name,
-      start_time: shift.start_time,
-      end_time: shift.end_time,
-      hours: Number(shift.paid_hours),
-      className: colorClasses[shift.color] || colorClasses.cyan,
-    }));
+    const custom = ((data || []) as CustomShiftRow[]).map(customShiftToDefinition);
+    setCustomShifts(custom);
     setShiftOptions([...SHIFT_OPTIONS, ...custom]);
   }
 
@@ -359,6 +300,14 @@ export default function SchedulePage() {
       }
     }
 
+    setStarterShiftsHidden(
+      allRules.some(
+        (rule) =>
+          !rule.employee_id &&
+          rule.rule_type === STARTER_SHIFTS_RULE &&
+          rule.rule_value === STARTER_SHIFTS_HIDDEN,
+      ),
+    );
     setRules(nextRules);
     setSavedRules(allRules);
     setRulesLoaded(true);
@@ -507,6 +456,17 @@ export default function SchedulePage() {
       return;
     }
 
+    const defaultShift = shiftRoles.defaultShift;
+    if (!defaultShift) {
+      setErrorMessage("Add at least one shift on the Shifts page before using Auto Generate.");
+      return;
+    }
+
+    if (employees.length === 0) {
+      setErrorMessage("Add your employees first, then Auto Generate can build the week.");
+      return;
+    }
+
     const hasExistingShifts = employees.some((employee) =>
       WORK_DAYS.some((day) => {
         const code = grid[employee.id]?.[String(day.offset)] ?? "OFF";
@@ -561,8 +521,19 @@ export default function SchedulePage() {
     }
 
     function chooseOpeningShift(dayIndex: number, position: number): ShiftCode {
-      const preferred: ShiftCode[] = position % 2 === 0 ? ["815-530", "830-530", "900-600"] : ["830-530", "815-530", "900-600"];
-      return preferred.find((shift) => shiftAllowedOnDay(shift, dayIndex)) ?? "900-600";
+      // Rotate through the opening shifts so the earliest start is shared.
+      const openers = shiftRoles.openers;
+      const rotation = openers.length > 0 ? position % openers.length : 0;
+      const preferred: ShiftCode[] = [
+        ...openers.slice(rotation),
+        ...openers.slice(0, rotation),
+        ...shiftRoles.mids,
+      ];
+      return preferred.find((shift) => shiftAllowedOnDay(shift, dayIndex)) ?? defaultShift!;
+    }
+
+    function chooseClosingShift(dayIndex: number): ShiftCode {
+      return shiftRoles.closers.find((shift) => shiftAllowedOnDay(shift, dayIndex)) ?? defaultShift!;
     }
 
     const employeeCount = employees.length;
@@ -675,12 +646,12 @@ export default function SchedulePage() {
       const closerCount = Math.min(rules.closersPerDay, remainingAfterOpeners);
 
       rotated.forEach((employee, position) => {
-        let shift: ShiftCode = "900-600";
+        let shift: ShiftCode = defaultShift;
 
         if (position < openerCount) {
           shift = chooseOpeningShift(dayIndex, position);
         } else if (position >= rotated.length - closerCount) {
-          shift = shiftAllowedOnDay("1030-715", dayIndex) ? "1030-715" : "900-600";
+          shift = chooseClosingShift(dayIndex);
         }
         const requiredShift = employeeRequiredShifts.get(employee.id)?.get(dayIndex);
         generated[employee.id][String(day.offset)] = requiredShift && shiftAllowedOnDay(requiredShift, dayIndex) ? requiredShift : shift;
@@ -701,14 +672,14 @@ export default function SchedulePage() {
 
       if (currentHours > rules.targetHours + 1) {
         const middleDays = WORK_DAYS.filter(
-          (day) => generated[employee.id][String(day.offset)] === "900-600",
+          (day) => generated[employee.id][String(day.offset)] === defaultShift,
         ).reverse();
 
         for (const day of middleDays) {
           if (currentHours <= rules.targetHours + 1) break;
 
           generated[employee.id][String(day.offset)] = "OFF";
-          currentHours -= 8;
+          currentHours -= getShift(defaultShift, shiftOptions).hours;
         }
       }
 
@@ -723,14 +694,14 @@ export default function SchedulePage() {
           const coverage = employees.filter((otherEmployee) => {
             const code =
               generated[otherEmployee.id][String(day.offset)] ?? "OFF";
-            return !["OFF", "PTO", "HOLIDAY"].includes(code);
+            return isWorkingCode(code);
           }).length;
 
           const isUnavailable = employeeUnavailableDays.get(employee.id)?.has(day.offset) ?? false;
           const requiredShift = employeeRequiredShifts.get(employee.id)?.get(day.offset);
-          if (coverage < employeeCount && !isUnavailable && !requiredShift && shiftAllowedOnDay("900-600", day.offset)) {
-            generated[employee.id][String(day.offset)] = "900-600";
-            currentHours += 8;
+          if (coverage < employeeCount && !isUnavailable && !requiredShift && shiftAllowedOnDay(defaultShift, day.offset)) {
+            generated[employee.id][String(day.offset)] = defaultShift;
+            currentHours += getShift(defaultShift, shiftOptions).hours;
           }
         }
       }
@@ -748,15 +719,15 @@ export default function SchedulePage() {
         const code =
           generatedWithPTO[employee.id]?.[String(day.offset)] ?? "OFF";
 
-        if (!["OFF", "PTO", "HOLIDAY"].includes(code)) {
+        if (isWorkingCode(code)) {
           working += 1;
         }
 
-        if (code === "815-530" || code === "830-530") {
+        if (isOpener(code)) {
           openers += 1;
         }
 
-        if (code === "1030-715") {
+        if (isCloser(code)) {
           closers += 1;
         }
       }
@@ -845,16 +816,16 @@ export default function SchedulePage() {
           daysOff += 1;
         }
 
-        if (day.offset === 0 && code === "1030-715") {
+        if (day.offset === 0 && isCloser(code)) {
           mondayCloses += 1;
         }
 
-        if (day.offset === 4 && code === "1030-715") {
+        if (day.offset === 4 && isCloser(code)) {
           fridayCloses += 1;
         }
 
         if (day.offset === 5) {
-          if (code === "1030-715") {
+          if (isCloser(code)) {
             saturdayCloses += 1;
           }
 
@@ -979,7 +950,7 @@ export default function SchedulePage() {
 
       setErrorMessage(
         `Schedule saved, but metrics were not updated: ${
-          parts.join(" | ") || "Unknown Supabase error"
+          parts.join(" | ") || "please try again"
         }`,
       );
 
@@ -1000,9 +971,9 @@ export default function SchedulePage() {
 
     const publishWarnings = WORK_DAYS.flatMap((day) => {
       const codes = employees.map((employee) => grid[employee.id]?.[String(day.offset)] ?? "OFF");
-      const openers = codes.filter((code) => code === "815-530" || code === "830-530").length;
-      const closers = codes.filter((code) => code === "1030-715").length;
-      const working = codes.filter((code) => !["OFF", "PTO", "HOLIDAY"].includes(code)).length;
+      const openers = codes.filter(isOpener).length;
+      const closers = codes.filter(isCloser).length;
+      const working = codes.filter(isWorkingCode).length;
       const dayWarnings: string[] = [];
       if (openers < rules.openersPerDay) dayWarnings.push(`${day.name} has ${openers} opener(s); goal ${rules.openersPerDay}.`);
       if (closers < rules.closersPerDay) dayWarnings.push(`${day.name} has ${closers} closer(s); goal ${rules.closersPerDay}.`);
@@ -1093,7 +1064,7 @@ export default function SchedulePage() {
     if (metricsError) {
       setErrorMessage(
         `Schedule published, but metrics were not updated: ${
-          metricsError.message || "Unknown Supabase error"
+          metricsError.message || "please try again"
         }`,
       );
       setPublishing(false);
@@ -1191,7 +1162,7 @@ export default function SchedulePage() {
     }
 
     return totals;
-  }, [employees, grid]);
+  }, [employees, grid, shiftOptions]);
 
   const dailyCoverage = useMemo(() => {
     return WORK_DAYS.map((day) => {
@@ -1202,22 +1173,22 @@ export default function SchedulePage() {
       for (const employee of employees) {
         const code = grid[employee.id]?.[String(day.offset)] ?? "OFF";
 
-        if (!["OFF", "PTO", "HOLIDAY"].includes(code)) {
+        if (isWorkingCode(code)) {
           working += 1;
         }
 
-        if (code === "815-530" || code === "830-530") {
+        if (isOpener(code)) {
           openers += 1;
         }
 
-        if (code === "1030-715") {
+        if (isCloser(code)) {
           closers += 1;
         }
       }
 
       return { openers, closers, working };
     });
-  }, [employees, grid]);
+  }, [employees, grid, shiftRoles]);
 
   function moveWeek(numberOfDays: number) {
     setWeekStart(addDays(weekStart, numberOfDays));
@@ -1229,7 +1200,8 @@ export default function SchedulePage() {
         <div>
           <h1 className="text-4xl font-bold">Schedule Builder</h1>
           <p className="mt-1 text-slate-600">
-            Create, edit, generate, and save the weekly store schedule.
+            Pick a week, tap Auto Generate for a starting point, adjust any
+            shift, then Save or Publish it for your team.
           </p>
         </div>
 
@@ -1283,8 +1255,8 @@ export default function SchedulePage() {
           <p className="mt-1 text-sm">{errorMessage}</p>
           {errorMessage.toLowerCase().includes("row-level security") && (
             <p className="mt-2 text-sm">
-              Supabase RLS is blocking this action. Confirm that schedules and
-              schedule_entries have select, insert, update, and delete policies.
+              Your account doesn&apos;t have permission to make this change. Ask
+              the workspace owner to check your access on the Team page.
             </p>
           )}
         </div>
@@ -1428,9 +1400,17 @@ export default function SchedulePage() {
       {loading ? (
         <div className="rounded-xl bg-white p-6 shadow">Loading schedule...</div>
       ) : employees.length === 0 ? (
-        <div className="rounded-xl bg-white p-6 text-center shadow">
-          No active employees were found. Add employees before creating a
-          schedule.
+        <div className="rounded-xl bg-white p-8 text-center shadow">
+          <h2 className="text-xl font-bold">No team members yet</h2>
+          <p className="mt-2 text-slate-600">
+            Add the people you schedule, then come back here to build the week.
+          </p>
+          <Link
+            href="/employees/add"
+            className="mt-4 inline-block rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white hover:bg-blue-700"
+          >
+            Add your first employee
+          </Link>
         </div>
       ) : (
         <div className="overflow-x-auto rounded-xl bg-white shadow">
@@ -1495,7 +1475,10 @@ export default function SchedulePage() {
                           className={`w-full rounded-lg border border-slate-300 px-2 py-2 text-sm font-medium ${shift.className} ${approvedPTO ? "cursor-not-allowed opacity-80 ring-2 ring-purple-300" : ""}`}
                           title={approvedPTO ? "Approved PTO — manage this on the PTO page" : undefined}
                         >
-                          {shiftOptions.map((option) => (
+                          {(selectableShifts.some((option) => option.code === code)
+                            ? selectableShifts
+                            : [...selectableShifts, shift]
+                          ).map((option) => (
                             <option key={option.code} value={option.code}>
                               {option.label}
                             </option>
@@ -1508,9 +1491,9 @@ export default function SchedulePage() {
                   <td className="p-3 text-center">
                     <span
                       className={`inline-flex min-w-16 justify-center rounded-full px-3 py-1 font-bold ${
-                        employeeHours[employee.id] > 40
+                        employeeHours[employee.id] > rules.targetHours
                           ? "bg-red-100 text-red-800"
-                          : employeeHours[employee.id] >= 38
+                          : employeeHours[employee.id] >= rules.targetHours - 2
                             ? "bg-green-100 text-green-800"
                             : "bg-amber-100 text-amber-800"
                       }`}
@@ -1542,7 +1525,7 @@ export default function SchedulePage() {
       <div className="rounded-xl bg-white p-5 shadow">
         <h2 className="text-lg font-bold">Shift legend</h2>
         <div className="mt-3 flex flex-wrap gap-2">
-          {shiftOptions.map((shift) => (
+          {selectableShifts.map((shift) => (
             <span
               key={shift.code}
               className={`rounded-full px-3 py-1 text-sm font-medium ${shift.className}`}

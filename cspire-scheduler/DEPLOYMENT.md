@@ -1,4 +1,4 @@
-# Deploying the C Spire Scheduler
+# Deploying Workforce Scheduler
 
 ## 1. Keep secrets out of the project
 

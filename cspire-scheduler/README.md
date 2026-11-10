@@ -1,36 +1,41 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Workforce Scheduler
 
-## Getting Started
+Weekly staff scheduling for small businesses — retail stores, restaurants, salons, clinics, or any team that works shifts.
 
-First, run the development server:
+## What it does
+
+- **Team** — add employees, positions, and contact info; invite other managers or view-only teammates.
+- **Shifts** — define the shifts your business actually works. Starter shifts are included so you can try it on day one, and can be hidden once yours are set up.
+- **Rules** — openers and closers per day, target weekly hours, days off, availability, required shifts, and shifts limited to certain days.
+- **Auto Generate** — builds a starting schedule from your rules and approved time off. Opening and closing shifts are detected from their start and end times, so it works with any hours.
+- **Time off** — approved PTO is locked into the schedule automatically.
+- **Publish & share** — publish a week and send your team a read-only link they can open on any phone.
+- **Reports & fairness metrics** — hours, closes, and weekend coverage per person, with CSV export.
+- **AI assistant** — ask in plain language ("give Alex Saturday off", "add a new employee"); changes that matter wait for manager approval.
+
+## Getting started (managers)
+
+1. Create an account and name your workspace.
+2. Add your employees.
+3. Add your shifts on the **Shifts** page (or use the starter shifts to try it out).
+4. Set your scheduling rules.
+5. Open **Schedule**, tap **Auto Generate**, adjust anything, then **Publish**.
+
+## Running it locally (developers)
+
+Requires Node 20+ and a Supabase project.
 
 ```bash
+npm install
+cp .env.example .env.local   # then fill in your Supabase values
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open http://localhost:3000.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+See [DEPLOYMENT.md](DEPLOYMENT.md) for deploying to Vercel, and review
+`SUPABASE_SECURITY_BEFORE_LAUNCH.sql` before inviting real users.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## Tech
 
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Next.js · React · TypeScript · Tailwind CSS · Supabase (auth, Postgres, row-level security) · Vercel

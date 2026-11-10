@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../src/lib/supabase";
+import { fallbackShift } from "../../src/lib/shifts";
 
 type Employee = {
   id: string;
@@ -88,31 +89,11 @@ function displayDate(value: string) {
 }
 
 function shiftLabel(code: string) {
-  const labels: Record<string, string> = {
-    OFF: "OFF",
-    PTO: "PTO",
-    HOLIDAY: "Holiday",
-    "815-530": "8:15–5:30",
-    "830-530": "8:30–5:30",
-    "900-600": "9:00–6:00",
-    "1030-715": "10:30–7:15",
-  };
-
-  return labels[code] || code;
+  return fallbackShift(code).label;
 }
 
 function shiftClass(code: string) {
-  const classes: Record<string, string> = {
-    OFF: "bg-slate-100 text-slate-700",
-    PTO: "bg-purple-100 text-purple-800",
-    HOLIDAY: "bg-amber-100 text-amber-800",
-    "815-530": "bg-green-100 text-green-800",
-    "830-530": "bg-emerald-100 text-emerald-800",
-    "900-600": "bg-blue-100 text-blue-800",
-    "1030-715": "bg-red-100 text-red-800",
-  };
-
-  return classes[code] || "bg-slate-100 text-slate-700";
+  return fallbackShift(code).className;
 }
 
 export default function ReportsPage() {

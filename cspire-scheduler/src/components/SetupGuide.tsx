@@ -33,7 +33,7 @@ export default function SetupGuide() {
 
   const steps = useMemo(() => counts ? [
     { label: "Add your employees", href: "/employees", done: counts.employees > 0 },
-    { label: "Review or add custom shifts", href: "/shifts", done: counts.shifts > 0, optional: true },
+    { label: "Add your shifts", href: "/shifts", done: counts.shifts > 0, optional: true },
     { label: "Set your scheduling rules", href: "/rules", done: counts.rules > 0 },
     { label: "Review PTO and time off", href: "/pto", done: false, optional: true },
     { label: "Create your first schedule", href: "/schedule", done: counts.schedules > 0 },
@@ -53,7 +53,7 @@ export default function SetupGuide() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p className="text-xs font-bold uppercase tracking-wide text-blue-700">Getting started</p>
-          <h2 className="mt-1 text-2xl font-bold">Set up your store</h2>
+          <h2 className="mt-1 text-2xl font-bold">Set up your workspace</h2>
           <p className="mt-1 text-sm text-slate-600">{completed} of {required.length} required steps complete</p>
         </div>
         <button type="button" onClick={() => void dismiss()} className="text-sm font-semibold text-slate-500 hover:text-slate-900">

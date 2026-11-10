@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../src/lib/supabase";
+import { BUILT_IN_SHIFTS, CUSTOM_COLOR_CLASSES } from "../../src/lib/shifts";
 
 type Employee = { id: string; employee_name: string; position: string | null; status: string | null };
 type Schedule = { id: string; week_start: string; status: string; updated_at: string | null };
@@ -16,21 +17,6 @@ type PublicPayload = {
 };
 
 const WORK_DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-const builtInLabels: Record<string, string> = {
-  OFF: "OFF", PTO: "PTO", HOLIDAY: "Holiday", "815-530": "8:15–5:30",
-  "830-530": "8:30–5:30", "900-600": "9:00–6:00", "1030-715": "10:30–7:15",
-};
-const builtInClasses: Record<string, string> = {
-  OFF: "bg-slate-100 text-slate-700", PTO: "bg-purple-100 text-purple-800",
-  HOLIDAY: "bg-amber-100 text-amber-800", "815-530": "bg-green-100 text-green-800",
-  "830-530": "bg-emerald-100 text-emerald-800", "900-600": "bg-blue-100 text-blue-800",
-  "1030-715": "bg-red-100 text-red-800",
-};
-const customClasses: Record<string, string> = {
-  cyan: "bg-cyan-100 text-cyan-800", indigo: "bg-indigo-100 text-indigo-800",
-  pink: "bg-pink-100 text-pink-800", orange: "bg-orange-100 text-orange-800",
-  teal: "bg-teal-100 text-teal-800", lime: "bg-lime-100 text-lime-800",
-};
 
 function formatDate(date: Date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -90,10 +76,16 @@ export default function TeamSchedulePage() {
 
   const shiftMap = useMemo(() => {
     const map = new Map<string, { label: string; className: string }>();
-    Object.keys(builtInLabels).forEach((code) => map.set(code, { label: builtInLabels[code], className: builtInClasses[code] }));
-    (payload?.shifts || []).forEach((shift) => map.set(shift.code, { label: shift.name, className: customClasses[shift.color] || customClasses.cyan }));
+    BUILT_IN_SHIFTS.forEach((shift) => map.set(shift.code, { label: shift.label, className: shift.className }));
+    (payload?.shifts || []).forEach((shift) => map.set(shift.code, { label: shift.name, className: CUSTOM_COLOR_CLASSES[shift.color] || CUSTOM_COLOR_CLASSES.cyan }));
     return map;
   }, [payload]);
+
+  // Only show legend entries for shifts that appear this week.
+  const usedShiftCodes = useMemo(
+    () => new Set((payload?.entries || []).map((entry) => entry.shift_code || "OFF")),
+    [payload],
+  );
 
   const hours = useMemo(() => {
     const totals: Record<string, number> = {};
@@ -134,7 +126,7 @@ export default function TeamSchedulePage() {
                 <tbody>{payload.employees.map((employee) => <tr key={employee.id} className="border-b"><td className="sticky left-0 bg-white p-3"><div className="font-semibold">{employee.employee_name}</div><div className="text-xs text-slate-500">{employee.position || "Team Member"}</div></td>{WORK_DAYS.map((day, index) => { const entry = payload.entries.find((item) => item.employee_id === employee.id && item.shift_date === addDays(weekStart, index)); const shift = shiftMap.get(entry?.shift_code || "OFF") || { label: entry?.shift_code || "OFF", className: "bg-slate-100 text-slate-700" }; return <td key={day} className="p-2 text-center"><span className={`inline-flex rounded-md px-3 py-2 text-sm font-semibold ${shift.className}`}>{shift.label}</span></td>; })}<td className="p-3 text-center font-bold">{(hours[employee.id] || 0).toFixed(2)}</td></tr>)}</tbody>
               </table>
             </div>
-            <div className="rounded-xl bg-white p-4 shadow"><p className="text-sm font-bold">Shift legend</p><div className="mt-3 flex flex-wrap gap-2">{Array.from(shiftMap.entries()).map(([code, shift]) => <span key={code} className={`rounded-full px-3 py-1 text-xs font-semibold ${shift.className}`}>{shift.label}</span>)}</div></div>
+            <div className="rounded-xl bg-white p-4 shadow"><p className="text-sm font-bold">Shift legend</p><div className="mt-3 flex flex-wrap gap-2">{Array.from(shiftMap.entries()).filter(([code]) => usedShiftCodes.has(code)).map(([code, shift]) => <span key={code} className={`rounded-full px-3 py-1 text-xs font-semibold ${shift.className}`}>{shift.label}</span>)}</div></div>
           </>
         )}
       </div>

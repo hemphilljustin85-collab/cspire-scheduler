@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { BUILT_IN_SHIFTS } from "../../../src/lib/shifts";
 
 type AssistantAction = {
   type: string;
@@ -12,29 +13,6 @@ type Employee = {
   employee_id: string | null;
   position: string | null;
   status: string | null;
-};
-
-const SHIFT_CODES = [
-  "OFF",
-  "PTO",
-  "HOLIDAY",
-  "815-530",
-  "830-530",
-  "900-600",
-  "1030-715",
-] as const;
-
-const SHIFT_DETAILS: Record<
-  (typeof SHIFT_CODES)[number],
-  { start_time: string | null; end_time: string | null; hours: number }
-> = {
-  OFF: { start_time: null, end_time: null, hours: 0 },
-  PTO: { start_time: null, end_time: null, hours: 8 },
-  HOLIDAY: { start_time: null, end_time: null, hours: 8 },
-  "815-530": { start_time: "08:15", end_time: "17:30", hours: 8.25 },
-  "830-530": { start_time: "08:30", end_time: "17:30", hours: 8 },
-  "900-600": { start_time: "09:00", end_time: "18:00", hours: 8 },
-  "1030-715": { start_time: "10:30", end_time: "19:15", hours: 7.75 },
 };
 
 function environment(name: string) {
@@ -535,29 +513,27 @@ async function executeAction(
       const shiftCode = String(payload.shift_code || "");
       const weekStart = mondayFor(shiftDate);
 
-      const builtInShift = SHIFT_CODES.includes(shiftCode as never);
-      const customShifts = builtInShift
+      const normalizedShift = shiftCode.trim().toUpperCase();
+      const builtIn = BUILT_IN_SHIFTS.find((shift) => shift.code === normalizedShift);
+      const customShifts = builtIn
         ? []
-        : await supabaseRequest<Array<{ code: string }>>(
+        : await supabaseRequest<Array<{ code: string; start_time: string; end_time: string; paid_hours: number }>>(
             authorization,
-            `shift_templates?select=code&code=eq.${encodeURIComponent(shiftCode)}&active=eq.true&limit=1`,
+            `shift_templates?select=code,start_time,end_time,paid_hours&code=eq.${encodeURIComponent(normalizedShift)}&active=eq.true&limit=1`,
           );
 
-      if (!shiftDate || (!builtInShift && customShifts.length === 0)) {
+      if (!shiftDate || (!builtIn && customShifts.length === 0)) {
         throw new Error("A valid date and shift code are required.");
       }
 
-      const normalizedShift = shiftCode.toUpperCase();
-      const shiftValues = builtInShift
-        ? {
-            shift_code: normalizedShift,
-            ...SHIFT_DETAILS[normalizedShift as (typeof SHIFT_CODES)[number]],
-            updated_at: new Date().toISOString(),
-          }
-        : {
-            shift_code: normalizedShift,
-            updated_at: new Date().toISOString(),
-          };
+      const custom = customShifts[0];
+      const shiftValues = {
+        shift_code: normalizedShift,
+        start_time: builtIn ? builtIn.start_time : custom.start_time,
+        end_time: builtIn ? builtIn.end_time : custom.end_time,
+        hours: builtIn ? builtIn.hours : Number(custom.paid_hours),
+        updated_at: new Date().toISOString(),
+      };
 
       const schedules = await supabaseRequest<Array<{ id: string }>>(
         authorization,

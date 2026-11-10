@@ -11,7 +11,7 @@ const links = [
   { name: "Employees", href: "/employees", icon: "●" },
   { name: "Schedule", href: "/schedule", icon: "▤" },
   { name: "PTO", href: "/pto", icon: "◷" },
-  { name: "Custom Shifts", href: "/shifts", icon: "+" },
+  { name: "Shifts", href: "/shifts", icon: "+" },
   { name: "Rules", href: "/rules", icon: "✓" },
   { name: "Metrics", href: "/metrics", icon: "↗" },
   { name: "Reports", href: "/reports", icon: "▥" },

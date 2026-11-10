@@ -64,22 +64,22 @@ function formatRuleType(value: string) {
 
 function getRulePlaceholder(ruleType: string) {
   switch (ruleType) {
-    case "allowed_days_for_shift": return "Example: 815-530|Monday";
-    case "blocked_days_for_shift": return "Example: 815-530|Tuesday,Wednesday,Thursday,Friday,Saturday";
-    case "required_shift": return "Example: Monday|1030-715";
+    case "allowed_days_for_shift": return "Example: AM|Monday";
+    case "blocked_days_for_shift": return "Example: AM|Saturday";
+    case "required_shift": return "Example: Monday|CLOSE";
     case "preferred_day_off": return "Example: Saturday";
     case "availability": return "Example: Monday,Tuesday,Wednesday";
     case "unavailable": return "Example: Friday,Saturday";
-    case "preferred_shift": return "Example: 830-530";
-    default: return "Example: 2, 40, Monday, or 10:30-7:15";
+    case "preferred_shift": return "Example: AM";
+    default: return "Example: 2, 40, or Monday";
   }
 }
 
 function getRuleHelp(ruleType: string) {
   switch (ruleType) {
-    case "allowed_days_for_shift": return "Format: SHIFT|DAY or SHIFT|DAY,DAY. Example: 815-530|Monday means the 8:15 shift may only be assigned on Monday.";
+    case "allowed_days_for_shift": return "Format: SHIFT|DAY or SHIFT|DAY,DAY, using a short code from the Shifts page. Example: AM|Monday means the AM shift may only be assigned on Monday.";
     case "blocked_days_for_shift": return "Format: SHIFT|DAY or SHIFT|DAY,DAY. The generator will avoid that shift on those days.";
-    case "required_shift": return "Choose an employee, then use DAY|SHIFT. Example: Monday|1030-715.";
+    case "required_shift": return "Choose an employee, then use DAY|SHIFT with a short code from the Shifts page. Example: Monday|CLOSE.";
     case "preferred_day_off": return "Choose an employee and enter a day such as Saturday.";
     case "availability": return "Choose an employee and list allowed days separated by commas.";
     case "unavailable": return "Choose an employee and list blocked days separated by commas.";
@@ -117,7 +117,8 @@ export default function RulesPage() {
       console.error(error);
       setErrorMessage(error.message);
     } else {
-      setRules((data as Rule[]) || []);
+      // The starter-shift toggle lives on the Shifts page, not in this list.
+      setRules(((data as Rule[]) || []).filter((rule) => rule.rule_type !== "starter_shifts"));
     }
 
     setLoading(false);
@@ -278,8 +279,8 @@ export default function RulesPage() {
           <p className="mt-1 text-sm">{errorMessage}</p>
           {errorMessage.toLowerCase().includes("row-level security") && (
             <p className="mt-2 text-sm">
-              Supabase RLS is blocking this action. The ai_rules table needs
-              select, insert, update, and delete policies.
+              Your account doesn&apos;t have permission to change rules. Ask the
+              workspace owner to check your access on the Team page.
             </p>
           )}
         </div>
@@ -312,11 +313,11 @@ export default function RulesPage() {
                     rule_type: ruleType,
                     rule_value:
                       ruleType === "allowed_days_for_shift"
-                        ? "815-530|Monday"
+                        ? "AM|Monday"
                         : ruleType === "blocked_days_for_shift"
-                          ? "815-530|Tuesday,Wednesday,Thursday,Friday,Saturday"
+                          ? "AM|Saturday"
                           : ruleType === "required_shift"
-                            ? "Monday|1030-715"
+                            ? "Monday|CLOSE"
                             : ruleType === "preferred_day_off"
                               ? "Saturday"
                               : form.rule_value,
@@ -443,12 +444,6 @@ export default function RulesPage() {
                     <span className="rounded-full bg-slate-100 px-3 py-1">
                       {getEmployeeLabel(rule.employee_id)}
                     </span>
-
-                    {rule.store_id && (
-                      <span className="rounded-full bg-slate-100 px-3 py-1">
-                        Store: {rule.store_id}
-                      </span>
-                    )}
 
                     {(rule.start_date || rule.end_date) && (
                       <span className="rounded-full bg-slate-100 px-3 py-1">
