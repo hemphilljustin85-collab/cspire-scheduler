@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import { supabase } from "../../src/lib/supabase";
 
 type Rule = {
@@ -103,6 +103,12 @@ export default function RulesPage() {
   const [form, setForm] = useState<RuleForm>(emptyForm);
   const [message, setMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const formRef = useRef<HTMLFormElement>(null);
+
+  // Bring the form into view when it opens (the Edit buttons can be far down the list).
+  useEffect(() => {
+    if (showForm) formRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [showForm, editingRule]);
 
   useEffect(() => {
     void Promise.all([loadRules(), loadEmployees()]);
@@ -209,12 +215,23 @@ export default function RulesPage() {
     };
 
     const result = editingRule
-      ? await supabase.from("ai_rules").update(payload).eq("id", editingRule.id)
-      : await supabase.from("ai_rules").insert(payload);
+      ? await supabase.from("ai_rules").update(payload).eq("id", editingRule.id).select("id")
+      : await supabase.from("ai_rules").insert(payload).select("id");
 
     if (result.error) {
       console.error(result.error);
       setErrorMessage(result.error.message);
+      setSaving(false);
+      return;
+    }
+
+    // Supabase returns no error when access rules block a change; it just changes nothing.
+    if (!result.data || result.data.length === 0) {
+      setErrorMessage(
+        editingRule
+          ? "This rule couldn't be updated. Your account may not have permission to edit rules. Ask the workspace owner to check access."
+          : "This rule couldn't be added. Your account may not have permission to add rules. Ask the workspace owner to check access.",
+      );
       setSaving(false);
       return;
     }
@@ -249,14 +266,20 @@ export default function RulesPage() {
     setMessage("");
     setErrorMessage("");
 
-    const { error } = await supabase
+    const { data, error } = await supabase
       .from("ai_rules")
       .delete()
-      .eq("id", rule.id);
+      .eq("id", rule.id)
+      .select("id");
 
     if (error) {
       console.error(error);
       setErrorMessage(error.message);
+      return;
+    }
+
+    if (!data || data.length === 0) {
+      setErrorMessage("This rule couldn't be removed. Your account may not have permission to remove rules. Ask the workspace owner to check access.");
       return;
     }
 
@@ -303,7 +326,7 @@ export default function RulesPage() {
       )}
 
       {showForm && (
-        <form onSubmit={handleSubmit} className="rounded-xl bg-white p-6 shadow">
+        <form ref={formRef} onSubmit={handleSubmit} className="scroll-mt-4 rounded-xl bg-white p-6 shadow">
           <div className="mb-5 flex items-center justify-between">
             <h2 className="text-2xl font-bold">
               {editingRule ? "Edit Rule" : "Add Rule"}
