@@ -40,11 +40,22 @@ export const STATUS_SHIFTS: ShiftDefinition[] = [
 export const STARTER_SHIFTS: ShiftDefinition[] = [
   { code: "815-530", label: "8:15–5:30", start_time: "08:15", end_time: "17:30", hours: 8.25, className: "bg-green-100 text-green-800", starter: true },
   { code: "830-530", label: "8:30–5:30", start_time: "08:30", end_time: "17:30", hours: 8, className: "bg-emerald-100 text-emerald-800", starter: true },
-  { code: "900-600", label: "9:00–6:00", start_time: "09:00", end_time: "18:00", hours: 8, className: "bg-blue-100 text-blue-800", starter: true },
   { code: "1030-715", label: "10:30–7:15", start_time: "10:30", end_time: "19:15", hours: 7.75, className: "bg-red-100 text-red-800", starter: true },
 ];
 
-export const BUILT_IN_SHIFTS: ShiftDefinition[] = [...STATUS_SHIFTS, ...STARTER_SHIFTS];
+/**
+ * Shifts that used to be starters. They are never offered or auto-scheduled,
+ * but are kept so saved schedules that used them still show the right label.
+ */
+export const RETIRED_SHIFTS: ShiftDefinition[] = [
+  { code: "900-600", label: "9:00–6:00", start_time: "09:00", end_time: "18:00", hours: 8, className: "bg-blue-100 text-blue-800" },
+];
+
+/** Shifts that can still be assigned (status codes plus current starters). */
+export const ASSIGNABLE_BUILT_IN_SHIFTS: ShiftDefinition[] = [...STATUS_SHIFTS, ...STARTER_SHIFTS];
+
+/** Every built-in code, including retired ones, for displaying saved schedules. */
+export const BUILT_IN_SHIFTS: ShiftDefinition[] = [...ASSIGNABLE_BUILT_IN_SHIFTS, ...RETIRED_SHIFTS];
 
 export const SHIFT_COLORS = ["cyan", "indigo", "pink", "orange", "teal", "lime"] as const;
 
@@ -141,9 +152,12 @@ export function classifyShiftRoles(shifts: ShiftDefinition[]): ShiftRoles {
     .filter((shift) => !openers.includes(shift.code) && !closers.includes(shift.code))
     .map((shift) => shift.code);
 
-  // Prefer a middle shift; otherwise the longest working shift.
+  // Prefer a middle shift; otherwise the latest-starting opener that isn't
+  // the earliest one (the earliest is often limited to certain days);
+  // otherwise the longest working shift.
   const byHours = [...working].sort((a, b) => b.hours - a.hours);
-  const defaultShift = mids[0] ?? byHours[0]?.code ?? null;
+  const laterOpener = openers.length > 1 ? openers[openers.length - 1] : undefined;
+  const defaultShift = mids[0] ?? laterOpener ?? byHours[0]?.code ?? null;
 
   return { openers, closers, mids, defaultShift };
 }

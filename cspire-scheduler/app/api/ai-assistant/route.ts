@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { BUILT_IN_SHIFTS } from "../../../src/lib/shifts";
+import { ASSIGNABLE_BUILT_IN_SHIFTS } from "../../../src/lib/shifts";
 
 type AssistantAction = {
   type: string;
@@ -514,7 +514,7 @@ async function executeAction(
       const weekStart = mondayFor(shiftDate);
 
       const normalizedShift = shiftCode.trim().toUpperCase();
-      const builtIn = BUILT_IN_SHIFTS.find((shift) => shift.code === normalizedShift);
+      const builtIn = ASSIGNABLE_BUILT_IN_SHIFTS.find((shift) => shift.code === normalizedShift);
       const customShifts = builtIn
         ? []
         : await supabaseRequest<Array<{ code: string; start_time: string; end_time: string; paid_hours: number }>>(
