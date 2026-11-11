@@ -19,6 +19,7 @@ import {
   type ShiftDefinition,
 } from "../../src/lib/shifts";
 import { holidayShiftFor, ruleToHoliday, type Holiday } from "../../src/lib/holidays";
+import { timeOffCode } from "../../src/lib/timeOff";
 
 type Employee = {
   id: string;
@@ -68,11 +69,13 @@ type ShiftDayRule = {
   days: number[];
 };
 
+/** An approved days off request: uses PTO, or is a regular day off (request_type "off"). */
 type PTORecord = {
   employee_id: string;
   start_date: string;
   end_date: string;
   status: string;
+  request_type?: string | null;
 };
 
 const DEFAULT_RULES: SchedulerRules = {
@@ -462,7 +465,8 @@ export default function SchedulePage() {
 
     const { data, error } = await supabase
       .from("employee_time_off")
-      .select("employee_id, start_date, end_date, status")
+      // "*" so this works before and after the request_type column is added.
+      .select("*")
       .eq("status", "Approved")
       .lte("start_date", rangeEnd)
       .gte("end_date", rangeStart);
@@ -543,15 +547,26 @@ export default function SchedulePage() {
     setLoading(false);
   }
 
-  function isApprovedPTO(employeeId: string, dayOffset: number, records: PTORecord[] = ptoRecords) {
+  function approvedTimeOff(employeeId: string, dayOffset: number, records: PTORecord[] = ptoRecords) {
     const shiftDate = addDays(rangeStart, dayOffset);
 
-    return records.some(
+    return records.find(
       (record) =>
         record.employee_id === employeeId &&
         record.status === "Approved" &&
         dateIsWithinRange(shiftDate, record.start_date, record.end_date),
     );
+  }
+
+  /** True when an approved days off request (PTO or a day off) locks this cell. */
+  function isApprovedPTO(employeeId: string, dayOffset: number, records: PTORecord[] = ptoRecords) {
+    return approvedTimeOff(employeeId, dayOffset, records) !== undefined;
+  }
+
+  /** The code an approved request locks in: PTO, or OFF for a day off without PTO. */
+  function lockedCode(employeeId: string, dayOffset: number, records: PTORecord[] = ptoRecords) {
+    const record = approvedTimeOff(employeeId, dayOffset, records);
+    return record ? timeOffCode(record) : null;
   }
 
   function applyPTOToGrid(scheduleGrid: ScheduleGrid, records: PTORecord[] = ptoRecords) {
@@ -561,8 +576,9 @@ export default function SchedulePage() {
       nextGrid[employee.id] = { ...(scheduleGrid[employee.id] || {}) };
 
       for (const day of days) {
-        if (isApprovedPTO(employee.id, day.offset, records)) {
-          nextGrid[employee.id][String(day.offset)] = "PTO";
+        const locked = lockedCode(employee.id, day.offset, records);
+        if (locked) {
+          nextGrid[employee.id][String(day.offset)] = locked;
         }
       }
     }
@@ -576,7 +592,7 @@ export default function SchedulePage() {
     shiftCode: ShiftCode,
   ) {
     if (isApprovedPTO(employeeId, dayOffset)) {
-      setErrorMessage("Approved PTO cannot be changed from the Schedule page.");
+      setErrorMessage("Approved days off can't be changed here. Edit them on the Days Off page.");
       return;
     }
 
@@ -753,7 +769,7 @@ export default function SchedulePage() {
     }
 
     const codeAt = (employeeId: string, day: DayInfo) =>
-      isApprovedPTO(employeeId, day.offset) ? "PTO" : generated[employeeId][String(day.offset)] ?? "OFF";
+      lockedCode(employeeId, day.offset) ?? generated[employeeId][String(day.offset)] ?? "OFF";
 
     function tallyDay(day: DayInfo) {
       for (const employee of employees) {
@@ -1276,9 +1292,7 @@ export default function SchedulePage() {
       let daysOffCount = 0;
 
       for (const day of days) {
-        const code = isApprovedPTO(employee.id, day.offset)
-          ? "PTO"
-          : grid[employee.id]?.[String(day.offset)] ?? "OFF";
+        const code = lockedCode(employee.id, day.offset) ?? grid[employee.id]?.[String(day.offset)] ?? "OFF";
 
         totalHours += shiftFor(code, day.offset).hours;
 
@@ -1846,7 +1860,7 @@ export default function SchedulePage() {
             Rules: {rules.openersPerDay} open · {rules.closersPerDay} close · {rules.targetHours} hrs · {savedRules.length} saved
           </span>
           <span className="rounded-full bg-purple-100 px-3 py-1 text-xs font-semibold text-purple-800">
-            Approved PTO: {ptoRecords.length}
+            Approved days off: {ptoRecords.length}
           </span>
         </div>
 
@@ -2030,7 +2044,7 @@ export default function SchedulePage() {
                                     )
                                   }
                                   className={`w-full rounded-lg border border-slate-300 px-2 py-2 text-sm font-medium ${shift.className} ${approvedPTO ? "cursor-not-allowed opacity-80 ring-2 ring-purple-300" : ""} ${day.inMonth ? "" : "opacity-70"}`}
-                                  title={approvedPTO ? "Approved PTO — manage this on the PTO page" : undefined}
+                                  title={approvedPTO ? "Approved days off — manage this on the Days Off page" : undefined}
                                 >
                                   {(dayOptions.some((option) => option.code === code)
                                     ? dayOptions

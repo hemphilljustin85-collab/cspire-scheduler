@@ -35,7 +35,7 @@ export default function SetupGuide() {
     { label: "Add your employees", href: "/employees", done: counts.employees > 0 },
     { label: "Add your shifts", href: "/shifts", done: counts.shifts > 0, optional: true },
     { label: "Set your scheduling rules", href: "/rules", done: counts.rules > 0 },
-    { label: "Review PTO and time off", href: "/pto", done: false, optional: true },
+    { label: "Review days off requests", href: "/days-off", done: false, optional: true },
     { label: "Create your first schedule", href: "/schedule", done: counts.schedules > 0 },
   ] : [], [counts]);
   const required = steps.filter((step) => !step.optional);

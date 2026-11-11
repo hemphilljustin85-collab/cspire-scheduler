@@ -288,7 +288,7 @@ export default function DashboardPage() {
   const quickLinks = [
     ["/schedule", "Build Schedule", "Create and save the weekly schedule."],
     ["/employees", "Employees", "Add, update, or deactivate employees."],
-    ["/pto", "PTO", "Review approved and upcoming time off."],
+    ["/days-off", "Days Off", "Review approved and upcoming days off and PTO."],
     ["/rules", "Rules", "Manage scheduling and employee rules."],
     ["/metrics", "Metrics", "Review hours, closes, and fairness."],
     ["/reports", "Reports", "Print the weekly schedule and summary."],
@@ -317,9 +317,9 @@ export default function DashboardPage() {
       accent: "border-emerald-500 bg-emerald-50 text-emerald-700",
     },
     {
-      label: "Approved PTO",
+      label: "Approved days off",
       value: summary.approvedPTO,
-      detail: summary.approvedPTO ? "Review coverage" : "No PTO conflicts",
+      detail: summary.approvedPTO ? "Review coverage" : "No days off this week",
       icon: "◆",
       accent: "border-violet-500 bg-violet-50 text-violet-700",
     },
@@ -556,23 +556,23 @@ export default function DashboardPage() {
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-2xl font-bold">
-                    Approved PTO This Week
+                    Approved Days Off This Week
                   </h2>
                   <p className="mt-1 text-sm text-slate-500">
                     Requests overlapping the selected week.
                   </p>
                 </div>
                 <Link
-                  href="/pto"
+                  href="/days-off"
                   className="text-sm font-semibold text-blue-600"
                 >
-                  Manage PTO
+                  Manage Days Off
                 </Link>
               </div>
 
               {pto.length === 0 ? (
                 <p className="mt-5 text-slate-500">
-                  No approved PTO overlaps this week.
+                  No approved days off this week.
                 </p>
               ) : (
                 <div className="mt-5 space-y-3">
