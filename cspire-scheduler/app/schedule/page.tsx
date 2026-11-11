@@ -20,6 +20,7 @@ import {
 } from "../../src/lib/shifts";
 import { holidayShiftFor, ruleToHoliday, type Holiday } from "../../src/lib/holidays";
 import { timeOffCode } from "../../src/lib/timeOff";
+import { CHECK_CATEGORIES, checkSchedule, type CheckIssue } from "../../src/lib/scheduleCheck";
 
 type Employee = {
   id: string;
@@ -251,7 +252,7 @@ export default function SchedulePage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
-  const [generationWarnings, setGenerationWarnings] = useState<string[]>([]);
+  const [showCheckDetails, setShowCheckDetails] = useState(true);
   const [publishing, setPublishing] = useState(false);
   // Every shift the app knows about (used to display saved schedules).
   const [shiftOptions, setShiftOptions] =
@@ -489,7 +490,6 @@ export default function SchedulePage() {
     setLoading(true);
     setMessage("");
     setErrorMessage("");
-    setGenerationWarnings([]);
 
     const { data: schedules, error: scheduleError } = await supabase
       .from("schedules")
@@ -604,7 +604,6 @@ export default function SchedulePage() {
       },
     }));
     setMessage("");
-    setGenerationWarnings([]);
   }
 
   async function generateStarterSchedule() {
@@ -814,7 +813,6 @@ export default function SchedulePage() {
 
     let sequence = 0;
     let rulesUsed = 0;
-    const warnings: string[] = [];
 
     weekStarts.forEach((weekOf, weekIndex) => {
       const weekDays = days.filter((day) => day.weekIndex === weekIndex);
@@ -1144,116 +1142,6 @@ export default function SchedulePage() {
 
     const generatedWithPTO = applyPTOToGrid(generated);
 
-    for (const day of days) {
-      if (!generateWeek(day.weekIndex)) continue;
-
-      let openers = 0;
-      let closers = 0;
-      let working = 0;
-      const holiday = weekHolidays.get(day.offset);
-
-      for (const employee of employees) {
-        const code =
-          generatedWithPTO[employee.id]?.[String(day.offset)] ?? "OFF";
-
-        if (isWorkingCode(code)) {
-          working += 1;
-        }
-
-        if (isOpener(code)) {
-          openers += 1;
-        }
-
-        if (isCloser(code)) {
-          closers += 1;
-        }
-      }
-
-      if (holiday) {
-        if (holiday.mode === "short" && working === 0) {
-          warnings.push(`${dayLabel(day)} (${holiday.name}): nobody is scheduled for the short day.`);
-        }
-        continue;
-      }
-
-      if (openers < rules.openersPerDay) {
-        warnings.push(
-          `${dayLabel(day)}: only ${openers} opener(s), goal is ${rules.openersPerDay}.`,
-        );
-      }
-
-      if (closers < rules.closersPerDay) {
-        warnings.push(
-          `${dayLabel(day)}: only ${closers} closer(s), goal is ${rules.closersPerDay}.`,
-        );
-      }
-
-      if (working === 0) {
-        warnings.push(`${dayLabel(day)}: no employees are scheduled to work.`);
-      }
-    }
-
-    weekStarts.forEach((weekOf, weekIndex) => {
-      if (!generateWeek(weekIndex)) return;
-      const weekDays = days.filter((day) => day.weekIndex === weekIndex);
-      const weekName = isMonth ? ` (week of ${displayDate(weekOf)})` : "";
-
-      for (const employee of employees) {
-        const totalHours = weekDays.reduce((sum, day) => {
-          const code =
-            generatedWithPTO[employee.id]?.[String(day.offset)] ?? "OFF";
-          return sum + shiftFor(code, day.offset).hours;
-        }, 0);
-
-        const offDays = weekDays.filter((day) =>
-          ["OFF", "HOLIDAY"].includes(generatedWithPTO[employee.id]?.[String(day.offset)] ?? "OFF"),
-        ).length;
-
-        if (totalHours > rules.targetHours + 1) {
-          warnings.push(
-            `${employee.employee_name}${weekName}: ${totalHours.toFixed(
-              2,
-            )} hours is above the ${rules.targetHours}-hour target.`,
-          );
-        }
-
-        if (totalHours < rules.targetHours - 4) {
-          warnings.push(
-            `${employee.employee_name}${weekName}: ${totalHours.toFixed(
-              2,
-            )} hours is below the ${rules.targetHours}-hour target.`,
-          );
-        }
-
-        if (offDays < rules.daysOffPerWeek) {
-          warnings.push(
-            `${employee.employee_name}${weekName}: only ${offDays} OFF day(s), goal is ${rules.daysOffPerWeek}.`,
-          );
-        }
-      }
-    });
-
-    // Month view: check each monthly preferred amount for the month.
-    if (isMonth) {
-      const monthKey = month.slice(0, 7);
-      const allOpenTargets = parseMonthlyTargets("monthly_open_target", savedRules);
-      const allCloseTargets = parseMonthlyTargets("monthly_close_target", savedRules);
-      for (const employee of employees) {
-        for (const kind of ["open", "close"] as const) {
-          for (const day of WORK_DAYS) {
-            const target = monthlyTarget(kind === "open" ? allOpenTargets : allCloseTargets, employee.id, day.offset);
-            if (target === undefined) continue;
-            const count = monthlyCounts[employee.id][`${kind}|${monthKey}|${day.offset}`] ?? 0;
-            if (count !== target) {
-              warnings.push(
-                `${employee.employee_name}: ${kind === "open" ? "opens" : "closes"} ${count} ${day.name}(s) in ${monthLabel(month)}; preferred amount is ${target}.`,
-              );
-            }
-          }
-        }
-      }
-    }
-
     const historyNote =
       historyShifts > 0
         ? ` Balanced against ${historyShifts} saved shift(s) since ${displayDate(historyStart)}.`
@@ -1267,12 +1155,14 @@ export default function SchedulePage() {
         ? ` Kept ${keptWeeks.size} published week(s) as they were.`
         : "";
     const scope = isMonth ? `${monthLabel(month)} generated` : "Schedule generated";
-    setGenerationWarnings(warnings);
+    const found = runCheck(generatedWithPTO);
+    const problems = found.filter((issue) => issue.severity === "problem").length;
     setGrid(generatedWithPTO);
+    setShowCheckDetails(true);
     setMessage(
-      (warnings.length === 0
-        ? `${scope} successfully using ${rulesUsed} saved rule(s). All main staffing targets were met.`
-        : `${scope} using ${rulesUsed} saved rule(s). Review ${warnings.length} warning(s) before saving.`) +
+      (found.length === 0
+        ? `${scope} using ${rulesUsed} saved rule(s). The schedule check found no issues.`
+        : `${scope} using ${rulesUsed} saved rule(s). The schedule check found ${problems} problem(s) and ${found.length - problems} heads-up(s); review them below before saving.`) +
         keptNote +
         historyNote +
         holidayNote,
@@ -1468,27 +1358,11 @@ export default function SchedulePage() {
       return;
     }
 
-    const publishWarnings = days.flatMap((day) => {
-      const codes = employees.map((employee) => grid[employee.id]?.[String(day.offset)] ?? "OFF");
-      const openers = codes.filter(isOpener).length;
-      const closers = codes.filter(isCloser).length;
-      const working = codes.filter(isWorkingCode).length;
-      const dayWarnings: string[] = [];
-      const holiday = weekHolidays.get(day.offset);
-      if (holiday) {
-        if (holiday.mode === "short" && working === 0) dayWarnings.push(`${dayLabel(day)} (${holiday.name}) has nobody scheduled for the short day.`);
-        return dayWarnings;
-      }
-      if (openers < rules.openersPerDay) dayWarnings.push(`${dayLabel(day)} has ${openers} opener(s); goal ${rules.openersPerDay}.`);
-      if (closers < rules.closersPerDay) dayWarnings.push(`${dayLabel(day)} has ${closers} closer(s); goal ${rules.closersPerDay}.`);
-      if (working === 0) dayWarnings.push(`${dayLabel(day)} has no working employees.`);
-      return dayWarnings;
-    });
-    setGenerationWarnings(publishWarnings);
-
-    if (publishWarnings.length > 0) {
+    const problems = issues.filter((issue) => issue.severity === "problem");
+    if (problems.length > 0) {
+      setShowCheckDetails(true);
       const confirmed = window.confirm(
-        `This schedule has ${publishWarnings.length} coverage warning(s). Publish it anyway?`,
+        `The schedule check found ${problems.length} problem(s), like missing openers/closers or someone without a day off. Publish anyway?`,
       );
       if (!confirmed) return;
     }
@@ -1612,7 +1486,65 @@ export default function SchedulePage() {
         : "Schedule cleared. Click Save Schedule to store the changes.",
     );
     setErrorMessage("");
-    setGenerationWarnings([]);
+  }
+
+  /** Run the schedule check on a grid (the one on screen, or a freshly generated one). */
+  function runCheck(gridToCheck: ScheduleGrid): CheckIssue[] {
+    return checkSchedule({
+      employees,
+      days,
+      weekStarts,
+      grid: gridToCheck,
+      rules,
+      savedRules,
+      isOpener,
+      isCloser,
+      isWorking: isWorkingCode,
+      hoursFor: (code, offset) => shiftFor(code, offset).hours,
+      timesFor: (code, offset) => {
+        const shift = shiftFor(code, offset);
+        return isWorkingCode(code) ? { start: shift.start_time, end: shift.end_time } : { start: null, end: null };
+      },
+      holidayFor: (offset) => weekHolidays.get(offset),
+      month: isMonth ? month : null,
+    });
+  }
+
+  // Re-checked after every change to the schedule.
+  const issues = useMemo(
+    () => (loading || employees.length === 0 ? [] : runCheck(grid)),
+    [loading, employees, days, weekStarts, grid, rules, savedRules, shiftRoles, shiftOptions, weekHolidays, isMonth, month],
+  );
+  const problemCount = issues.filter((issue) => issue.severity === "problem").length;
+  const headsUpCount = issues.length - problemCount;
+
+  // Outline the cells and day headers that have issues.
+  const cellIssues = useMemo(() => {
+    const map = new Map<string, CheckIssue["severity"]>();
+    for (const issue of issues) {
+      if (issue.offset === undefined) continue;
+      const key = issue.employeeId ? `${issue.employeeId}|${issue.offset}` : `day|${issue.offset}`;
+      if (map.get(key) !== "problem") map.set(key, issue.severity);
+    }
+    return map;
+  }, [issues]);
+
+  const [flashTarget, setFlashTarget] = useState<string | null>(null);
+
+  function jumpToIssue(issue: CheckIssue) {
+    const firstWeekOfEmployee = 0;
+    const target =
+      issue.employeeId && issue.offset !== undefined
+        ? `cell-${issue.employeeId}-${issue.offset}`
+        : issue.offset !== undefined
+          ? `day-${issue.offset}`
+          : issue.employeeId
+            ? `emp-${issue.employeeId}-${firstWeekOfEmployee}`
+            : null;
+    if (!target) return;
+    document.getElementById(target)?.scrollIntoView({ behavior: "smooth", block: "center" });
+    setFlashTarget(target);
+    window.setTimeout(() => setFlashTarget((current) => (current === target ? null : current)), 1600);
   }
 
   // Hours per employee for each visible week.
@@ -1780,33 +1712,6 @@ export default function SchedulePage() {
         </div>
       )}
 
-      {generationWarnings.length > 0 && (
-        <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-amber-900">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="font-bold">Generation warnings</h2>
-              <p className="text-sm">
-                The generator created the best schedule it could, but these items
-                should be reviewed before saving.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setGenerationWarnings([])}
-              className="self-start rounded-lg border border-amber-400 px-3 py-1 text-sm font-medium hover:bg-amber-100"
-            >
-              Dismiss
-            </button>
-          </div>
-
-          <ul className="mt-3 space-y-1 text-sm">
-            {generationWarnings.map((warning, index) => (
-              <li key={`${warning}-${index}`}>• {warning}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-
       <div className="flex flex-col gap-3 rounded-xl bg-white p-4 shadow sm:flex-row sm:items-center sm:justify-between">
         <div className="flex flex-wrap items-center gap-3">
           {isMonth ? (
@@ -1917,6 +1822,75 @@ export default function SchedulePage() {
         </div>
       </div>
 
+      {!loading && employees.length > 0 && (
+        <div
+          className={`rounded-xl border p-4 shadow-sm ${
+            problemCount > 0
+              ? "border-red-200 bg-red-50"
+              : headsUpCount > 0
+                ? "border-amber-200 bg-amber-50"
+                : "border-green-200 bg-green-50"
+          }`}
+        >
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 className="font-bold">
+                Schedule check
+                <span className="ml-2 font-normal text-slate-600">
+                  {issues.length === 0
+                    ? "· No issues found"
+                    : `· ${problemCount} problem${problemCount === 1 ? "" : "s"} · ${headsUpCount} heads-up${headsUpCount === 1 ? "" : "s"}`}
+                </span>
+              </h2>
+              <p className="text-sm text-slate-600">
+                Updates as you change shifts. Problems are outlined in red, heads-ups in amber. Tap one to jump to it.
+              </p>
+            </div>
+            {issues.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setShowCheckDetails((current) => !current)}
+                className="self-start rounded-lg border border-slate-300 bg-white px-3 py-1 text-sm font-medium hover:bg-slate-50"
+              >
+                {showCheckDetails ? "Hide details" : "Show details"}
+              </button>
+            )}
+          </div>
+
+          {showCheckDetails && issues.length > 0 && (
+            <div className="mt-3 grid gap-3 lg:grid-cols-2">
+              {CHECK_CATEGORIES.filter((category) => issues.some((issue) => issue.category === category)).map((category) => {
+                const items = issues.filter((issue) => issue.category === category);
+                return (
+                  <div key={category} className="rounded-lg bg-white p-3">
+                    <h3 className="text-sm font-bold">
+                      {category} <span className="font-normal text-slate-500">({items.length})</span>
+                    </h3>
+                    <ul className="mt-2 max-h-56 space-y-1 overflow-y-auto text-sm">
+                      {items.map((issue) => (
+                        <li key={issue.id}>
+                          <button
+                            type="button"
+                            onClick={() => jumpToIssue(issue)}
+                            className="flex w-full items-start gap-2 rounded px-1 py-0.5 text-left hover:bg-slate-100"
+                          >
+                            <span
+                              className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${issue.severity === "problem" ? "bg-red-500" : "bg-amber-500"}`}
+                              aria-label={issue.severity === "problem" ? "Problem" : "Heads-up"}
+                            />
+                            <span>{issue.message}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
+
       {showHistory && (
         <div className="rounded-xl border border-slate-200 bg-white p-5 shadow">
           <div className="flex items-center justify-between"><div><h2 className="text-xl font-bold">Schedule history</h2><p className="text-sm text-slate-500">Restore a previous saved version, then review and save it.</p></div><button onClick={()=>setShowHistory(false)} className="rounded-lg border px-3 py-2">Close</button></div>
@@ -1986,7 +1960,14 @@ export default function SchedulePage() {
                         return (
                           <th
                             key={day.date}
-                            className={`min-w-36 p-3 text-center ${isToday ? "bg-blue-700 ring-2 ring-inset ring-blue-300" : ""} ${day.inMonth ? "" : "bg-slate-700"}`}
+                            id={`day-${day.offset}`}
+                            className={`min-w-36 scroll-mt-24 p-3 text-center ${isToday ? "bg-blue-700 ring-2 ring-inset ring-blue-300" : ""} ${day.inMonth ? "" : "bg-slate-700"} ${
+                              cellIssues.get(`day|${day.offset}`) === "problem"
+                                ? "ring-4 ring-inset ring-red-400"
+                                : cellIssues.get(`day|${day.offset}`) === "heads-up"
+                                  ? "ring-4 ring-inset ring-amber-400"
+                                  : ""
+                            } ${flashTarget === `day-${day.offset}` ? "animate-pulse" : ""}`}
                           >
                             <div>{day.name}</div>
                             <div className="text-xs font-normal text-slate-300">
@@ -2017,7 +1998,7 @@ export default function SchedulePage() {
 
                       return (
                         <tr key={employee.id} className="border-b border-slate-200">
-                          <td className="sticky left-0 z-10 bg-white p-3">
+                          <td id={`emp-${employee.id}-${weekIndex}`} className={`sticky left-0 z-10 bg-white p-3 ${flashTarget === `emp-${employee.id}-${weekIndex}` ? "animate-pulse bg-amber-100" : ""}`}>
                             <div className="font-semibold">{employee.employee_name}</div>
                             <div className="text-xs text-slate-500">
                               {employee.position || "No position"}
@@ -2032,7 +2013,11 @@ export default function SchedulePage() {
                             const dayOptions = optionsForDay(day.offset);
 
                             return (
-                              <td key={day.date} className={`p-2 ${day.inMonth ? "" : "bg-slate-50"}`}>
+                              <td
+                                key={day.date}
+                                id={`cell-${employee.id}-${day.offset}`}
+                                className={`p-2 ${day.inMonth ? "" : "bg-slate-50"} ${flashTarget === `cell-${employee.id}-${day.offset}` ? "animate-pulse bg-amber-100" : ""}`}
+                              >
                                 <select
                                   value={code}
                                   disabled={approvedPTO}
@@ -2043,7 +2028,13 @@ export default function SchedulePage() {
                                       event.target.value as ShiftCode,
                                     )
                                   }
-                                  className={`w-full rounded-lg border border-slate-300 px-2 py-2 text-sm font-medium ${shift.className} ${approvedPTO ? "cursor-not-allowed opacity-80 ring-2 ring-purple-300" : ""} ${day.inMonth ? "" : "opacity-70"}`}
+                                  className={`w-full rounded-lg border border-slate-300 px-2 py-2 text-sm font-medium ${shift.className} ${approvedPTO ? "cursor-not-allowed opacity-80 ring-2 ring-purple-300" : ""} ${day.inMonth ? "" : "opacity-70"} ${
+                                    cellIssues.get(`${employee.id}|${day.offset}`) === "problem"
+                                      ? "ring-2 ring-red-500"
+                                      : cellIssues.get(`${employee.id}|${day.offset}`) === "heads-up"
+                                        ? "ring-2 ring-amber-400"
+                                        : ""
+                                  }`}
                                   title={approvedPTO ? "Approved days off — manage this on the Days Off page" : undefined}
                                 >
                                   {(dayOptions.some((option) => option.code === code)
