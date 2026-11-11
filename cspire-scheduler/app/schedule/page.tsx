@@ -1510,24 +1510,18 @@ export default function SchedulePage() {
     });
   }
 
-  // Re-checked after every change to the schedule.
-  const issues = useMemo(
-    () => (loading || employees.length === 0 ? [] : runCheck(grid)),
-    [loading, employees, days, weekStarts, grid, rules, savedRules, shiftRoles, shiftOptions, weekHolidays, isMonth, month],
-  );
+  // Re-checked on every render, so it always matches what's on screen (the check is quick).
+  const issues = loading || employees.length === 0 ? [] : runCheck(grid);
   const problemCount = issues.filter((issue) => issue.severity === "problem").length;
   const headsUpCount = issues.length - problemCount;
 
   // Outline the cells and day headers that have issues.
-  const cellIssues = useMemo(() => {
-    const map = new Map<string, CheckIssue["severity"]>();
-    for (const issue of issues) {
-      if (issue.offset === undefined) continue;
-      const key = issue.employeeId ? `${issue.employeeId}|${issue.offset}` : `day|${issue.offset}`;
-      if (map.get(key) !== "problem") map.set(key, issue.severity);
-    }
-    return map;
-  }, [issues]);
+  const cellIssues = new Map<string, CheckIssue["severity"]>();
+  for (const issue of issues) {
+    if (issue.offset === undefined) continue;
+    const key = issue.employeeId ? `${issue.employeeId}|${issue.offset}` : `day|${issue.offset}`;
+    if (cellIssues.get(key) !== "problem") cellIssues.set(key, issue.severity);
+  }
 
   const [flashTarget, setFlashTarget] = useState<string | null>(null);
 
