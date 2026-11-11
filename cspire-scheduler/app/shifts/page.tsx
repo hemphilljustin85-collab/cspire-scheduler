@@ -150,9 +150,12 @@ export default function ShiftsPage() {
 
   async function removeShift(shift: ShiftTemplate) {
     if (!window.confirm(`Remove ${shift.name}? Existing schedules keep their saved shift code.`)) return;
-    const { error } = await supabase.from("shift_templates").delete().eq("id", shift.id);
+    const { data, error } = await supabase.from("shift_templates").delete().eq("id", shift.id).select("id");
     if (error) setErrorMessage(error.message);
-    else {
+    else if (!data || data.length === 0) {
+      // Supabase returns no error when access rules block a delete; it just removes nothing.
+      setErrorMessage("This shift couldn't be removed. Your account may not have permission to delete shifts. Ask the workspace owner to check access.");
+    } else {
       setMessage("Shift removed.");
       await loadShifts();
     }
