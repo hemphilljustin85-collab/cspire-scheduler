@@ -319,11 +319,41 @@ export default function SchedulePage() {
     return holidayShiftFor(code, weekHolidays.get(dayOffset)) ?? getShift(code, shiftOptions);
   }
 
+  // Shift codes that can't be used on each visible day, from the
+  // "Allowed days for shift" / "Blocked days for shift" rules (set on the
+  // Shifts page or the Rules page). Store-wide rules only.
+  const blockedCodesByDay = useMemo(() => {
+    const map = new Map<number, Set<string>>();
+    for (const day of days) {
+      const weekOf = weekStarts[day.weekIndex];
+      const active = savedRules.filter((rule) => !rule.employee_id && ruleAppliesToWeek(rule, weekOf));
+      const allowed = active
+        .filter((rule) => rule.rule_type === "allowed_days_for_shift")
+        .map((rule) => parseShiftDayRule(rule.rule_value, shiftOptions))
+        .filter((rule): rule is ShiftDayRule => rule !== null);
+      const blocked = active
+        .filter((rule) => rule.rule_type === "blocked_days_for_shift")
+        .map((rule) => parseShiftDayRule(rule.rule_value, shiftOptions))
+        .filter((rule): rule is ShiftDayRule => rule !== null);
+      const codes = new Set<string>();
+      for (const shift of new Set(allowed.map((rule) => rule.shift))) {
+        if (!allowed.some((rule) => rule.shift === shift && rule.days.includes(day.weekday))) codes.add(shift);
+      }
+      for (const rule of blocked) if (rule.days.includes(day.weekday)) codes.add(rule.shift);
+      map.set(day.offset, codes);
+    }
+    return map;
+  }, [days, weekStarts, savedRules, shiftOptions]);
+
   /** Shifts offered in a cell's dropdown on a given day. */
   function optionsForDay(dayOffset: number): ShiftDefinition[] {
+    const blocked = blockedCodesByDay.get(dayOffset);
+    const usable = blocked && blocked.size > 0
+      ? selectableShifts.filter((option) => !blocked.has(option.code))
+      : selectableShifts;
     const holiday = weekHolidays.get(dayOffset);
-    if (!holiday) return selectableShifts;
-    const options = holiday.mode === "short" ? [...selectableShifts, HOLIDAY_SHORT_SHIFT] : selectableShifts;
+    if (!holiday) return usable;
+    const options = holiday.mode === "short" ? [...usable, HOLIDAY_SHORT_SHIFT] : usable;
     return options.map((option) => shiftFor(option.code, dayOffset));
   }
 
@@ -839,11 +869,21 @@ export default function SchedulePage() {
           ...openers.slice(0, rotation),
           ...shiftRoles.mids,
         ];
-        return preferred.find((shift) => shiftAllowedOnDay(shift, weekday)) ?? defaultShift!;
+        return preferred.find((shift) => shiftAllowedOnDay(shift, weekday)) ?? regularShiftFor(weekday);
       }
 
       function chooseClosingShift(weekday: number): ShiftCode {
-        return shiftRoles.closers.find((shift) => shiftAllowedOnDay(shift, weekday)) ?? defaultShift!;
+        return shiftRoles.closers.find((shift) => shiftAllowedOnDay(shift, weekday)) ?? regularShiftFor(weekday);
+      }
+
+      /**
+       * The regular shift for a weekday: the default shift if it can be used that
+       * day, otherwise the first middle, opening or closing shift that can.
+       * "OFF" when no shift is allowed that day.
+       */
+      function regularShiftFor(weekday: number): ShiftCode {
+        const candidates = [defaultShift!, ...shiftRoles.mids, ...shiftRoles.openers, ...shiftRoles.closers];
+        return candidates.find((shift) => shiftAllowedOnDay(shift, weekday)) ?? "OFF";
       }
 
       // Days off for this week, by weekday (0 = Monday).
@@ -994,7 +1034,7 @@ export default function SchedulePage() {
           .slice(0, closerCount);
 
         rotated.forEach((employee) => {
-          let shift: ShiftCode = defaultShift;
+          let shift: ShiftCode = regularShiftFor(dayIndex);
           const openerPosition = openersToday.indexOf(employee);
 
           if (openerPosition >= 0) {
@@ -1026,16 +1066,20 @@ export default function SchedulePage() {
           // Trim regular shifts from the end of the week, Saturdays last,
           // so Saturday coverage and Saturday-off fairness aren't disturbed.
           const middleDays = weekDays
-            .filter((day) => generated[employee.id][String(day.offset)] === defaultShift)
+            .filter((day) => {
+              const code = generated[employee.id][String(day.offset)];
+              return code !== "OFF" && code === regularShiftFor(day.weekday);
+            })
             .reverse()
             .sort((a, b) => Number(a.weekday === saturdayIndex) - Number(b.weekday === saturdayIndex));
 
           for (const day of middleDays) {
             if (currentHours <= rules.targetHours + 1) break;
 
+            const trimmed = generated[employee.id][String(day.offset)];
             generated[employee.id][String(day.offset)] = "OFF";
-            recordShift(employee.id, day.date, day.weekday, defaultShift, -1);
-            currentHours -= getShift(defaultShift, shiftOptions).hours;
+            recordShift(employee.id, day.date, day.weekday, trimmed, -1);
+            currentHours -= getShift(trimmed, shiftOptions).hours;
           }
         }
 
@@ -1068,8 +1112,8 @@ export default function SchedulePage() {
                   ? chooseClosingShift(day.weekday)
                   : codesToday.filter(isOpener).length < rules.openersPerDay && targetPriority("open", employee, day) !== 2
                     ? chooseOpeningShift(day.weekday, codesToday.filter(isOpener).length)
-                    : defaultShift;
-              if (shiftAllowedOnDay(fillShift, day.weekday)) {
+                    : regularShiftFor(day.weekday);
+              if (fillShift !== "OFF" && shiftAllowedOnDay(fillShift, day.weekday)) {
                 generated[employee.id][String(day.offset)] = fillShift;
                 currentHours += getShift(fillShift, shiftOptions).hours;
                 recordShift(employee.id, day.date, day.weekday, fillShift);
