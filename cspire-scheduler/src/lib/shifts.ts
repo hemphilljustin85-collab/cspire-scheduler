@@ -38,7 +38,6 @@ export const STATUS_SHIFTS: ShiftDefinition[] = [
  * Codes stay the same so previously saved schedules keep displaying correctly.
  */
 export const STARTER_SHIFTS: ShiftDefinition[] = [
-  { code: "815-530", label: "8:15–5:30", start_time: "08:15", end_time: "17:30", hours: 8.25, className: "bg-green-100 text-green-800", starter: true },
   { code: "830-530", label: "8:30–5:30", start_time: "08:30", end_time: "17:30", hours: 8, className: "bg-emerald-100 text-emerald-800", starter: true },
   { code: "1030-715", label: "10:30–7:15", start_time: "10:30", end_time: "19:15", hours: 7.75, className: "bg-red-100 text-red-800", starter: true },
 ];
@@ -48,6 +47,7 @@ export const STARTER_SHIFTS: ShiftDefinition[] = [
  * but are kept so saved schedules that used them still show the right label.
  */
 export const RETIRED_SHIFTS: ShiftDefinition[] = [
+  { code: "815-530", label: "8:15–5:30", start_time: "08:15", end_time: "17:30", hours: 8.25, className: "bg-green-100 text-green-800" },
   { code: "900-600", label: "9:00–6:00", start_time: "09:00", end_time: "18:00", hours: 8, className: "bg-blue-100 text-blue-800" },
 ];
 
