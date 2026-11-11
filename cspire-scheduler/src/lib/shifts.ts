@@ -54,8 +54,21 @@ export const RETIRED_SHIFTS: ShiftDefinition[] = [
 /** Shifts that can still be assigned (status codes plus current starters). */
 export const ASSIGNABLE_BUILT_IN_SHIFTS: ShiftDefinition[] = [...STATUS_SHIFTS, ...STARTER_SHIFTS];
 
+/** Working on a holiday with shortened business hours (times come from the holiday). */
+export const HOLIDAY_SHORT_CODE = "HOLIDAY_SHORT";
+
+/** Display-only definition; the schedule builder fills in each holiday's times and hours. */
+export const HOLIDAY_SHORT_SHIFT: ShiftDefinition = {
+  code: HOLIDAY_SHORT_CODE,
+  label: "Holiday short day",
+  start_time: null,
+  end_time: null,
+  hours: 0,
+  className: "bg-orange-100 text-orange-800",
+};
+
 /** Every built-in code, including retired ones, for displaying saved schedules. */
-export const BUILT_IN_SHIFTS: ShiftDefinition[] = [...ASSIGNABLE_BUILT_IN_SHIFTS, ...RETIRED_SHIFTS];
+export const BUILT_IN_SHIFTS: ShiftDefinition[] = [...ASSIGNABLE_BUILT_IN_SHIFTS, HOLIDAY_SHORT_SHIFT, ...RETIRED_SHIFTS];
 
 export const SHIFT_COLORS = ["cyan", "indigo", "pink", "orange", "teal", "lime"] as const;
 

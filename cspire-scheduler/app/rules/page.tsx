@@ -117,8 +117,8 @@ export default function RulesPage() {
       console.error(error);
       setErrorMessage(error.message);
     } else {
-      // The starter-shift toggle lives on the Shifts page, not in this list.
-      setRules(((data as Rule[]) || []).filter((rule) => rule.rule_type !== "starter_shifts"));
+      // The starter-shift toggle and holidays have their own pages, not this list.
+      setRules(((data as Rule[]) || []).filter((rule) => rule.rule_type !== "starter_shifts" && rule.rule_type !== "holiday"));
     }
 
     setLoading(false);

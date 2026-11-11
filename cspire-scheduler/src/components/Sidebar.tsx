@@ -12,6 +12,7 @@ const links = [
   { name: "Schedule", href: "/schedule", icon: "▤" },
   { name: "PTO", href: "/pto", icon: "◷" },
   { name: "Shifts", href: "/shifts", icon: "+" },
+  { name: "Holidays", href: "/holidays", icon: "★" },
   { name: "Rules", href: "/rules", icon: "✓" },
   { name: "Metrics", href: "/metrics", icon: "↗" },
   { name: "Reports", href: "/reports", icon: "▥" },

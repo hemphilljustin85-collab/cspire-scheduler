@@ -6,6 +6,8 @@ import { supabase } from "../../src/lib/supabase";
 import { getCurrentStore } from "../../src/lib/store";
 import {
   BUILT_IN_SHIFTS,
+  HOLIDAY_SHORT_CODE,
+  HOLIDAY_SHORT_SHIFT,
   STATUS_SHIFTS,
   STARTER_SHIFTS_HIDDEN,
   STARTER_SHIFTS_RULE,
@@ -16,6 +18,7 @@ import {
   type CustomShiftRow,
   type ShiftDefinition,
 } from "../../src/lib/shifts";
+import { holidayShiftFor, ruleToHoliday, type Holiday } from "../../src/lib/holidays";
 
 type Employee = {
   id: string;
@@ -219,6 +222,31 @@ export default function SchedulePage() {
   const shiftRoles = useMemo(() => classifyShiftRoles(selectableShifts), [selectableShifts]);
   const isOpener = (code: string) => shiftRoles.openers.includes(code);
   const isCloser = (code: string) => shiftRoles.closers.includes(code);
+
+  // Holidays (set up on the Holidays page) that fall in this week, by day offset.
+  const weekHolidays = useMemo(() => {
+    const map = new Map<number, Holiday>();
+    for (const rule of savedRules) {
+      const holiday = ruleToHoliday(rule);
+      if (!holiday) continue;
+      const day = WORK_DAYS.find((item) => addDays(weekStart, item.offset) === holiday.date);
+      if (day) map.set(day.offset, holiday);
+    }
+    return map;
+  }, [savedRules, weekStart]);
+
+  /** The shift for a cell, using the holiday's hours and times on holiday dates. */
+  function shiftFor(code: ShiftCode, dayOffset: number): ShiftDefinition {
+    return holidayShiftFor(code, weekHolidays.get(dayOffset)) ?? getShift(code, shiftOptions);
+  }
+
+  /** Shifts offered in a cell's dropdown on a given day. */
+  function optionsForDay(dayOffset: number): ShiftDefinition[] {
+    const holiday = weekHolidays.get(dayOffset);
+    if (!holiday) return selectableShifts;
+    const options = holiday.mode === "short" ? [...selectableShifts, HOLIDAY_SHORT_SHIFT] : selectableShifts;
+    return options.map((option) => shiftFor(option.code, dayOffset));
+  }
 
   useEffect(() => {
     void Promise.all([loadEmployees(), loadRules(), loadPTO(), loadCustomShifts()]);
@@ -570,6 +598,10 @@ export default function SchedulePage() {
 
       unavailable?.forEach((day) => plannedDaysOff[employee.id].add(day));
       preferred?.forEach((day) => plannedDaysOff[employee.id].add(day));
+      // A day the business is closed counts toward each person's days off.
+      weekHolidays.forEach((holiday, day) => {
+        if (holiday.mode === "closed") plannedDaysOff[employee.id].add(day);
+      });
       for (let offNumber = plannedDaysOff[employee.id].size; offNumber < daysOff; offNumber += 1) {
         let offDay = (employeeIndex + offNumber * 2) % workingDays;
         while (plannedDaysOff[employee.id].has(offDay) && plannedDaysOff[employee.id].size < workingDays) offDay = (offDay + 1) % workingDays;
@@ -592,6 +624,33 @@ export default function SchedulePage() {
     }
 
     WORK_DAYS.forEach((day, dayIndex) => {
+      const holiday = weekHolidays.get(day.offset);
+      if (holiday) {
+        // Closed: everyone is off for the holiday. Short day: enough people
+        // to cover the usual opener/closer counts work the shortened hours.
+        const staffNeeded =
+          holiday.mode === "short" ? Math.max(rules.openersPerDay, rules.closersPerDay, 1) : 0;
+        const byRotation = (list: Employee[]) =>
+          [...list].sort((a, b) => {
+            const aIndex = employees.findIndex((employee) => employee.id === a.id);
+            const bIndex = employees.findIndex((employee) => employee.id === b.id);
+            return ((aIndex + dayIndex) % Math.max(employeeCount, 1)) - ((bIndex + dayIndex) % Math.max(employeeCount, 1));
+          });
+        const canWork = employees.filter(
+          (employee) =>
+            !isApprovedPTO(employee.id, day.offset) &&
+            !(employeeUnavailableDays.get(employee.id)?.has(dayIndex) ?? false),
+        );
+        const preferred = byRotation(canWork.filter((employee) => !plannedDaysOff[employee.id]?.has(dayIndex)));
+        const backup = byRotation(canWork.filter((employee) => plannedDaysOff[employee.id]?.has(dayIndex)));
+        const workers = new Set([...preferred, ...backup].slice(0, staffNeeded).map((employee) => employee.id));
+
+        employees.forEach((employee) => {
+          generated[employee.id][String(day.offset)] = workers.has(employee.id) ? HOLIDAY_SHORT_CODE : "HOLIDAY";
+        });
+        return;
+      }
+
       const available = employees.filter(
         (employee) => !plannedDaysOff[employee.id]?.has(dayIndex),
       );
@@ -667,7 +726,7 @@ export default function SchedulePage() {
     employees.forEach((employee) => {
       let currentHours = WORK_DAYS.reduce((total, day) => {
         const code = generated[employee.id][String(day.offset)] ?? "OFF";
-        return total + getShift(code, shiftOptions).hours;
+        return total + shiftFor(code, day.offset).hours;
       }, 0);
 
       if (currentHours > rules.targetHours + 1) {
@@ -714,6 +773,7 @@ export default function SchedulePage() {
       let openers = 0;
       let closers = 0;
       let working = 0;
+      const holiday = weekHolidays.get(day.offset);
 
       for (const employee of employees) {
         const code =
@@ -730,6 +790,13 @@ export default function SchedulePage() {
         if (isCloser(code)) {
           closers += 1;
         }
+      }
+
+      if (holiday) {
+        if (holiday.mode === "short" && working === 0) {
+          warnings.push(`${day.name} (${holiday.name}): nobody is scheduled for the short day.`);
+        }
+        continue;
       }
 
       if (openers < rules.openersPerDay) {
@@ -753,12 +820,11 @@ export default function SchedulePage() {
       const totalHours = WORK_DAYS.reduce((sum, day) => {
         const code =
           generatedWithPTO[employee.id]?.[String(day.offset)] ?? "OFF";
-        return sum + getShift(code, shiftOptions).hours;
+        return sum + shiftFor(code, day.offset).hours;
       }, 0);
 
-      const offDays = WORK_DAYS.filter(
-        (day) =>
-          generatedWithPTO[employee.id]?.[String(day.offset)] === "OFF",
+      const offDays = WORK_DAYS.filter((day) =>
+        ["OFF", "HOLIDAY"].includes(generatedWithPTO[employee.id]?.[String(day.offset)] ?? "OFF"),
       ).length;
 
       if (totalHours > rules.targetHours + 1) {
@@ -784,12 +850,16 @@ export default function SchedulePage() {
       }
     }
 
+    const holidayNote =
+      weekHolidays.size > 0
+        ? ` Holidays applied: ${Array.from(weekHolidays.values()).map((holiday) => holiday.name).join(", ")}.`
+        : "";
     setGenerationWarnings(warnings);
     setGrid(generatedWithPTO);
     setMessage(
-      warnings.length === 0
+      (warnings.length === 0
         ? `Schedule generated successfully using ${activeRules.length} saved rule(s). All main staffing targets were met.`
-        : `Schedule generated using ${activeRules.length} saved rule(s). Review ${warnings.length} warning(s) before saving.`,
+        : `Schedule generated using ${activeRules.length} saved rule(s). Review ${warnings.length} warning(s) before saving.`) + holidayNote,
     );
     setErrorMessage("");
   }
@@ -810,7 +880,7 @@ export default function SchedulePage() {
           ? "PTO"
           : grid[employee.id]?.[String(day.offset)] ?? "OFF";
 
-        currentHours += getShift(code, shiftOptions).hours;
+        currentHours += shiftFor(code, day.offset).hours;
 
         if (code === "OFF") {
           daysOff += 1;
@@ -905,7 +975,7 @@ export default function SchedulePage() {
     const entries = employees.flatMap((employee) =>
       WORK_DAYS.map((day) => {
         const code = grid[employee.id]?.[String(day.offset)] ?? "OFF";
-        const shift = getShift(code, shiftOptions);
+        const shift = shiftFor(code, day.offset);
 
         return {
           schedule_id: activeScheduleId,
@@ -975,6 +1045,11 @@ export default function SchedulePage() {
       const closers = codes.filter(isCloser).length;
       const working = codes.filter(isWorkingCode).length;
       const dayWarnings: string[] = [];
+      const holiday = weekHolidays.get(day.offset);
+      if (holiday) {
+        if (holiday.mode === "short" && working === 0) dayWarnings.push(`${day.name} (${holiday.name}) has nobody scheduled for the short day.`);
+        return dayWarnings;
+      }
       if (openers < rules.openersPerDay) dayWarnings.push(`${day.name} has ${openers} opener(s); goal ${rules.openersPerDay}.`);
       if (closers < rules.closersPerDay) dayWarnings.push(`${day.name} has ${closers} closer(s); goal ${rules.closersPerDay}.`);
       if (working === 0) dayWarnings.push(`${day.name} has no working employees.`);
@@ -1032,7 +1107,7 @@ export default function SchedulePage() {
       WORK_DAYS.map((day) => {
         const code =
           grid[employee.id]?.[String(day.offset)] ?? "OFF";
-        const shift = getShift(code, shiftOptions);
+        const shift = shiftFor(code, day.offset);
 
         return {
           schedule_id: activeScheduleId,
@@ -1157,12 +1232,13 @@ export default function SchedulePage() {
     for (const employee of employees) {
       totals[employee.id] = WORK_DAYS.reduce((sum, day) => {
         const code = grid[employee.id]?.[String(day.offset)] ?? "OFF";
-        return sum + getShift(code, shiftOptions).hours;
+        return sum + shiftFor(code, day.offset).hours;
       }, 0);
     }
 
     return totals;
-  }, [employees, grid, shiftOptions]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [employees, grid, shiftOptions, weekHolidays]);
 
   const dailyCoverage = useMemo(() => {
     return WORK_DAYS.map((day) => {
@@ -1433,10 +1509,17 @@ export default function SchedulePage() {
                     <div className="text-xs font-normal text-slate-300">
                       {displayDate(addDays(weekStart, day.offset))}
                     </div>
-                    <div className="mt-1 text-xs font-normal text-slate-300">
-                      {dailyCoverage[index]?.openers ?? 0} open ·{" "}
-                      {dailyCoverage[index]?.closers ?? 0} close
-                    </div>
+                    {weekHolidays.get(day.offset) ? (
+                      <div className="mt-1 inline-flex rounded-full bg-amber-200 px-2 py-0.5 text-xs font-semibold text-amber-900">
+                        ★ {weekHolidays.get(day.offset)!.name}
+                        {weekHolidays.get(day.offset)!.mode === "closed" ? " · closed" : " · short day"}
+                      </div>
+                    ) : (
+                      <div className="mt-1 text-xs font-normal text-slate-300">
+                        {dailyCoverage[index]?.openers ?? 0} open ·{" "}
+                        {dailyCoverage[index]?.closers ?? 0} close
+                      </div>
+                    )}
                   </th>
                   );
                 })}
@@ -1457,8 +1540,9 @@ export default function SchedulePage() {
                   {WORK_DAYS.map((day) => {
                     const code =
                       grid[employee.id]?.[String(day.offset)] ?? "OFF";
-                    const shift = getShift(code, shiftOptions);
+                    const shift = shiftFor(code, day.offset);
                     const approvedPTO = isApprovedPTO(employee.id, day.offset);
+                    const dayOptions = optionsForDay(day.offset);
 
                     return (
                       <td key={day.name} className="p-2">
@@ -1475,9 +1559,9 @@ export default function SchedulePage() {
                           className={`w-full rounded-lg border border-slate-300 px-2 py-2 text-sm font-medium ${shift.className} ${approvedPTO ? "cursor-not-allowed opacity-80 ring-2 ring-purple-300" : ""}`}
                           title={approvedPTO ? "Approved PTO — manage this on the PTO page" : undefined}
                         >
-                          {(selectableShifts.some((option) => option.code === code)
-                            ? selectableShifts
-                            : [...selectableShifts, shift]
+                          {(dayOptions.some((option) => option.code === code)
+                            ? dayOptions
+                            : [...dayOptions, shift]
                           ).map((option) => (
                             <option key={option.code} value={option.code}>
                               {option.label}
