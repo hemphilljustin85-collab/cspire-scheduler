@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../src/lib/supabase";
 import { fallbackShift } from "../../src/lib/shifts";
+import { TIME_OFF_TYPES, timeOffType } from "../../src/lib/timeOff";
 
 type Employee = {
   id: string;
@@ -43,6 +44,7 @@ type PTORecord = {
   end_date: string;
   status: string;
   reason: string | null;
+  request_type?: string | null;
 };
 
 const WORK_DAYS = [
@@ -141,7 +143,7 @@ export default function ReportsPage() {
         ),
       supabase
         .from("employee_time_off")
-        .select("employee_id, start_date, end_date, status, reason")
+        .select("*")
         .eq("status", "Approved")
         .lte("start_date", weekEnd)
         .gte("end_date", weekStart),
@@ -298,7 +300,7 @@ export default function ReportsPage() {
         <div>
           <h1 className="text-4xl font-bold">Reports</h1>
           <p className="mt-1 text-slate-600">
-            Review and print weekly schedules, hours, PTO, and fairness.
+            Review and print weekly schedules, hours, days off, and fairness.
           </p>
         </div>
 
@@ -390,7 +392,7 @@ export default function ReportsPage() {
             </div>
 
             <div className="rounded-xl bg-white p-5 shadow">
-              <div className="text-sm text-slate-500">Approved PTO</div>
+              <div className="text-sm text-slate-500">Approved days off</div>
               <div className="mt-1 text-3xl font-bold">
                 {summary.approvedPTO}
               </div>
@@ -550,11 +552,11 @@ export default function ReportsPage() {
 
           <div className="grid gap-6 lg:grid-cols-2">
             <div className="rounded-xl bg-white p-5 shadow">
-              <h2 className="text-2xl font-bold">PTO Summary</h2>
+              <h2 className="text-2xl font-bold">Days Off Summary</h2>
 
               {ptoRecords.length === 0 ? (
                 <p className="mt-4 text-slate-500">
-                  No approved PTO overlaps this week.
+                  No approved days off this week.
                 </p>
               ) : (
                 <div className="mt-4 space-y-3">
@@ -568,8 +570,11 @@ export default function ReportsPage() {
                         key={`${record.employee_id}-${record.start_date}-${index}`}
                         className="rounded-lg bg-purple-50 p-3"
                       >
-                        <div className="font-semibold text-purple-900">
+                        <div className="flex items-center gap-2 font-semibold text-purple-900">
                           {employee?.employee_name || "Unknown employee"}
+                          <span className={`rounded-full px-2 py-0.5 text-xs ${TIME_OFF_TYPES[timeOffType(record)].className}`}>
+                            {TIME_OFF_TYPES[timeOffType(record)].badge}
+                          </span>
                         </div>
                         <div className="text-sm text-purple-800">
                           {displayDate(record.start_date)} through{" "}
@@ -606,7 +611,7 @@ export default function ReportsPage() {
                 </div>
 
                 <div className="flex items-center justify-between rounded-lg bg-slate-50 p-3">
-                  <span>PTO tracking</span>
+                  <span>Days off tracking</span>
                   <span className="font-semibold">Enabled</span>
                 </div>
 
