@@ -208,8 +208,8 @@ export default function MetricsPage() {
 
           {errorMessage.toLowerCase().includes("row-level security") && (
             <p className="mt-2 text-sm">
-              Supabase RLS is blocking this page. The schedule_metrics table
-              needs a select policy.
+              Your account doesn&apos;t have permission to do this. Ask the
+              workspace owner to check your access on the Team page.
             </p>
           )}
         </div>
@@ -363,8 +363,7 @@ export default function MetricsPage() {
       )}
 
       <div className="rounded-xl border border-blue-200 bg-blue-50 p-5 text-sm text-blue-900">
-        Metrics currently come from the schedule_metrics table. The next step
-        is updating these values automatically whenever a schedule is saved.
+        These numbers update every time you save or publish a schedule.
       </div>
     </div>
   );

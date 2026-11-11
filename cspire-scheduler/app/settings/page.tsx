@@ -184,8 +184,8 @@ export default function SettingsPage() {
 
           {errorMessage.toLowerCase().includes("row-level security") && (
             <p className="mt-2 text-sm">
-              Supabase RLS is blocking this action. The scheduler_settings
-              table needs select, insert, and update policies.
+              Your account doesn&apos;t have permission to do this. Ask the
+              workspace owner to check your access on the Team page.
             </p>
           )}
         </div>

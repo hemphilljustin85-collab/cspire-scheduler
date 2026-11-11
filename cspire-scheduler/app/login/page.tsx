@@ -185,7 +185,7 @@ export default function LoginPage() {
                   value={storeName}
                   onChange={(event) => setStoreName(event.target.value)}
                   className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-3"
-                  placeholder="Example: Magee Store"
+                  placeholder="Example: Main Street Location"
                 />
               </label>}
               {!inviteCode && <label className="block">

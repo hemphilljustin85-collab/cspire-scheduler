@@ -2,6 +2,12 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { supabase } from "../../src/lib/supabase";
+import {
+  SHIFT_COLORS,
+  STARTER_SHIFTS,
+  STARTER_SHIFTS_HIDDEN,
+  STARTER_SHIFTS_RULE,
+} from "../../src/lib/shifts";
 
 type ShiftTemplate = {
   id: string;
@@ -32,10 +38,51 @@ export default function ShiftsPage() {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const [starterRuleId, setStarterRuleId] = useState<string | null>(null);
+  const [updatingStarters, setUpdatingStarters] = useState(false);
+  const startersHidden = starterRuleId !== null;
 
   useEffect(() => {
-    void loadShifts();
+    void Promise.all([loadShifts(), loadStarterSetting()]);
   }, []);
+
+  async function loadStarterSetting() {
+    const { data } = await supabase
+      .from("ai_rules")
+      .select("id")
+      .eq("rule_type", STARTER_SHIFTS_RULE)
+      .eq("rule_value", STARTER_SHIFTS_HIDDEN)
+      .is("employee_id", null)
+      .limit(1);
+    setStarterRuleId((data as Array<{ id: string }> | null)?.[0]?.id ?? null);
+  }
+
+  async function toggleStarterShifts() {
+    setUpdatingStarters(true);
+    setErrorMessage("");
+    setMessage("");
+    if (startersHidden) {
+      const { error } = await supabase.from("ai_rules").delete().eq("id", starterRuleId);
+      if (error) setErrorMessage(error.message);
+      else setMessage("Starter shifts are showing again.");
+    } else {
+      if (shifts.length === 0 && !window.confirm("You haven't added your own shifts yet. Hide the starter shifts anyway?")) {
+        setUpdatingStarters(false);
+        return;
+      }
+      const { error } = await supabase.from("ai_rules").insert({
+        employee_id: null,
+        rule_type: STARTER_SHIFTS_RULE,
+        rule_value: STARTER_SHIFTS_HIDDEN,
+        start_date: null,
+        end_date: null,
+      });
+      if (error) setErrorMessage(error.message);
+      else setMessage("Starter shifts hidden. Only your shifts will be offered and auto-scheduled.");
+    }
+    await loadStarterSetting();
+    setUpdatingStarters(false);
+  }
 
   async function loadShifts() {
     setLoading(true);
@@ -95,7 +142,7 @@ export default function ShiftsPage() {
       setSaving(false);
       return;
     }
-    setMessage(editing ? "Shift updated." : "Custom shift added.");
+    setMessage(editing ? "Shift updated." : "Shift added.");
     setShowForm(false);
     setSaving(false);
     await loadShifts();
@@ -106,7 +153,7 @@ export default function ShiftsPage() {
     const { error } = await supabase.from("shift_templates").delete().eq("id", shift.id);
     if (error) setErrorMessage(error.message);
     else {
-      setMessage("Custom shift removed.");
+      setMessage("Shift removed.");
       await loadShifts();
     }
   }
@@ -115,13 +162,15 @@ export default function ShiftsPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-4xl font-bold">Custom Shifts</h1>
-          <p className="mt-1 text-slate-600">
-            Add shifts for your store. They appear in the schedule dropdown and hour totals.
+          <h1 className="text-4xl font-bold">Shifts</h1>
+          <p className="mt-1 max-w-2xl text-slate-600">
+            Set up the shifts your business actually works. Auto Generate treats the
+            earliest-starting shifts as openers and the latest-ending shifts as
+            closers, so any hours work.
           </p>
         </div>
         <button onClick={openAdd} className="rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white">
-          Add Custom Shift
+          Add Shift
         </button>
       </div>
 
@@ -134,11 +183,12 @@ export default function ShiftsPage() {
           <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <label className="space-y-1">
               <span className="text-sm font-medium">Shift name</span>
-              <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full rounded-lg border px-3 py-2" placeholder="Early Repair Shift" />
+              <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className="w-full rounded-lg border px-3 py-2" placeholder="Morning, Lunch rush, Close..." />
             </label>
             <label className="space-y-1">
               <span className="text-sm font-medium">Short code</span>
-              <input required value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} className="w-full rounded-lg border px-3 py-2" placeholder="REPAIR-EARLY" />
+              <input required value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} className="w-full rounded-lg border px-3 py-2" placeholder="AM" />
+              <span className="block text-xs text-slate-500">A short nickname used in rules, like AM or CLOSE.</span>
             </label>
             <label className="space-y-1">
               <span className="text-sm font-medium">Paid hours</span>
@@ -155,7 +205,7 @@ export default function ShiftsPage() {
             <label className="space-y-1">
               <span className="text-sm font-medium">Color</span>
               <select value={form.color} onChange={(e) => setForm({ ...form, color: e.target.value })} className="w-full rounded-lg border px-3 py-2">
-                {["cyan", "indigo", "pink", "orange", "teal", "lime"].map((color) => <option key={color}>{color}</option>)}
+                {SHIFT_COLORS.map((color) => <option key={color}>{color}</option>)}
               </select>
             </label>
           </div>
@@ -170,7 +220,10 @@ export default function ShiftsPage() {
         {loading ? (
           <p className="p-6">Loading shifts...</p>
         ) : shifts.length === 0 ? (
-          <p className="p-6 text-slate-600">No custom shifts yet. The built-in shifts remain available.</p>
+          <div className="p-6 text-slate-600">
+            <p className="font-semibold text-slate-900">You haven&apos;t added any shifts yet.</p>
+            <p className="mt-1">Tap Add Shift to create one for each shift your team works (for example Morning 7–3 and Evening 3–11).</p>
+          </div>
         ) : (
           <div className="divide-y">
             {shifts.map((shift) => (
@@ -187,6 +240,33 @@ export default function ShiftsPage() {
             ))}
           </div>
         )}
+      </div>
+
+      <div className="rounded-xl bg-white p-6 shadow">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className="text-xl font-bold">Starter shifts</h2>
+            <p className="mt-1 max-w-2xl text-sm text-slate-600">
+              Sample shifts so you can try the scheduler right away. Hide them once
+              your own shifts are set up. Past schedules that used them still show correctly.
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={updatingStarters}
+            onClick={() => void toggleStarterShifts()}
+            className="shrink-0 rounded-lg border px-4 py-2 font-semibold disabled:opacity-50"
+          >
+            {startersHidden ? "Show starter shifts" : "Hide starter shifts"}
+          </button>
+        </div>
+        <div className={`mt-4 flex flex-wrap gap-2 ${startersHidden ? "opacity-50" : ""}`}>
+          {STARTER_SHIFTS.map((shift) => (
+            <span key={shift.code} className={`rounded-full px-3 py-1 text-sm font-medium ${shift.className}`}>
+              {shift.label} · {shift.hours} hrs
+            </span>
+          ))}
+        </div>
       </div>
     </div>
   );
