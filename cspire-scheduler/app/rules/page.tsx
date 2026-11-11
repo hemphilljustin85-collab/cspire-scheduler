@@ -52,6 +52,8 @@ const RULE_TYPES = [
   { value: "allowed_days_for_shift", label: "Allowed days for shift" },
   { value: "blocked_days_for_shift", label: "Blocked days for shift" },
   { value: "preferred_day_off", label: "Preferred employee day off" },
+  { value: "monthly_close_target", label: "Closes per month on a day" },
+  { value: "monthly_open_target", label: "Opens per month on a day" },
   { value: "custom", label: "Custom rule" },
 ];
 
@@ -71,6 +73,8 @@ function getRulePlaceholder(ruleType: string) {
     case "availability": return "Example: Monday,Tuesday,Wednesday";
     case "unavailable": return "Example: Friday,Saturday";
     case "preferred_shift": return "Example: AM";
+    case "monthly_close_target": return "Example: Saturday|2";
+    case "monthly_open_target": return "Example: Monday|2";
     default: return "Example: 2, 40, or Monday";
   }
 }
@@ -81,6 +85,8 @@ function getRuleHelp(ruleType: string) {
     case "blocked_days_for_shift": return "Format: SHIFT|DAY or SHIFT|DAY,DAY. The generator will avoid that shift on those days.";
     case "required_shift": return "Choose an employee, then use DAY|SHIFT with a short code from the Shifts page. Example: Monday|CLOSE.";
     case "preferred_day_off": return "Choose an employee and enter a day such as Saturday.";
+    case "monthly_close_target": return "Format: DAY|NUMBER. Example: Saturday|2 means this person should close about 2 Saturdays each month (0 means avoid closing that day). Choose All employees to set it for everyone; a rule for one person overrides it. Auto Generate also counts closes already saved earlier in the month and in the previous month so it stays even.";
+    case "monthly_open_target": return "Format: DAY|NUMBER. Example: Monday|2 means this person should open about 2 Mondays each month (0 means avoid opening that day). Choose All employees to set it for everyone; a rule for one person overrides it.";
     case "availability": return "Choose an employee and list allowed days separated by commas.";
     case "unavailable": return "Choose an employee and list blocked days separated by commas.";
     default: return "Choose All employees for a store-wide rule. Date fields are optional.";
@@ -178,6 +184,16 @@ export default function RulesPage() {
     if (!form.rule_type.trim() || !form.rule_value.trim()) {
       setErrorMessage("Rule type and rule value are required.");
       return;
+    }
+
+    if (["monthly_close_target", "monthly_open_target"].includes(form.rule_type)) {
+      const [dayValue, countValue] = form.rule_value.split("|").map((part) => part.trim());
+      const validDay = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday"].includes((dayValue || "").toLowerCase());
+      const count = Number(countValue);
+      if (!validDay || countValue === undefined || countValue === "" || !Number.isInteger(count) || count < 0 || count > 6) {
+        setErrorMessage("Use DAY|NUMBER, for example Saturday|2 (a day Monday–Saturday and a whole number from 0 to 6).");
+        return;
+      }
     }
 
     setSaving(true);
@@ -320,7 +336,11 @@ export default function RulesPage() {
                             ? "Monday|CLOSE"
                             : ruleType === "preferred_day_off"
                               ? "Saturday"
-                              : form.rule_value,
+                              : ruleType === "monthly_close_target"
+                                ? "Saturday|2"
+                                : ruleType === "monthly_open_target"
+                                  ? "Monday|2"
+                                  : form.rule_value,
                   });
                 }}
                 className="w-full rounded-lg border border-slate-300 px-3 py-2"

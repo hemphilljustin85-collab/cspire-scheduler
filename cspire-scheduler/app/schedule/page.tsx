@@ -561,7 +561,7 @@ export default function SchedulePage() {
     setGenerationWarnings([]);
   }
 
-  function generateStarterSchedule() {
+  async function generateStarterSchedule() {
     if (!rulesLoaded) {
       setErrorMessage("Scheduling rules are still loading. Try again in a moment.");
       return;
@@ -620,25 +620,114 @@ export default function SchedulePage() {
       }
     }
 
-    // Running totals across the whole range, so opens, closes and Saturdays
-    // off are shared fairly over the month, not just within one week.
+    // Running totals, so opens, closes and Saturdays off are shared fairly
+    // over the month (and against last month), not just within one week.
     const opens: Record<string, number> = {};
     const closes: Record<string, number> = {};
     const saturdaysOff: Record<string, number> = {};
+    // Opens and closes by weekday (0 = Monday), e.g. how many Saturdays someone has closed.
+    const opensOn: Record<string, number[]> = {};
+    const closesOn: Record<string, number[]> = {};
+    // Opens and closes per calendar month and weekday, for the monthly preferred-amount rules.
+    const monthlyCounts: Record<string, Record<string, number>> = {};
     employees.forEach((employee) => {
       opens[employee.id] = 0;
       closes[employee.id] = 0;
       saturdaysOff[employee.id] = 0;
+      opensOn[employee.id] = WORK_DAYS.map(() => 0);
+      closesOn[employee.id] = WORK_DAYS.map(() => 0);
+      monthlyCounts[employee.id] = {};
     });
+
+    const monthlyKey = (kind: "open" | "close", date: string, weekday: number) =>
+      `${kind}|${date.slice(0, 7)}|${weekday}`;
+
+    function recordShift(employeeId: string, date: string, weekday: number, code: ShiftCode, change = 1) {
+      if (!(employeeId in opens)) return;
+      if (isOpener(code)) {
+        opens[employeeId] += change;
+        opensOn[employeeId][weekday] += change;
+        const key = monthlyKey("open", date, weekday);
+        monthlyCounts[employeeId][key] = (monthlyCounts[employeeId][key] ?? 0) + change;
+      }
+      if (isCloser(code)) {
+        closes[employeeId] += change;
+        closesOn[employeeId][weekday] += change;
+        const key = monthlyKey("close", date, weekday);
+        monthlyCounts[employeeId][key] = (monthlyCounts[employeeId][key] ?? 0) + change;
+      }
+    }
+
+    // Review the saved schedule from the previous month (and, in Week view,
+    // earlier weeks of this month) so this schedule evens things out.
+    const historyStart = addMonths(firstOfMonth(parseLocalDate(isMonth ? month : rangeStart)), -1);
+    let historyShifts = 0;
+    {
+      const { data: pastWeeks, error: pastError } = await supabase
+        .from("schedules")
+        .select("id, week_start")
+        .gte("week_start", getMonday(parseLocalDate(historyStart)))
+        .lt("week_start", rangeStart);
+
+      if (pastError) {
+        setErrorMessage(`Couldn't read last month's schedule: ${pastError.message}`);
+        return;
+      }
+
+      const pastEntries = await Promise.all(
+        ((pastWeeks as Array<{ id: string }>) || []).map((week) =>
+          supabase
+            .from("schedule_entries")
+            .select("employee_id, shift_date, shift_code")
+            .eq("schedule_id", week.id),
+        ),
+      );
+
+      for (const { data: entries, error: entriesError } of pastEntries) {
+        if (entriesError) {
+          setErrorMessage(`Couldn't read last month's schedule: ${entriesError.message}`);
+          return;
+        }
+        for (const entry of (entries as Array<{ employee_id: string; shift_date: string; shift_code: string }>) || []) {
+          if (entry.shift_date < historyStart || entry.shift_date >= rangeStart) continue;
+          if (!(entry.employee_id in opens)) continue;
+          const weekday = (parseLocalDate(entry.shift_date).getDay() + 6) % 7;
+          if (weekday > 5) continue;
+          recordShift(entry.employee_id, entry.shift_date, weekday, entry.shift_code);
+          if (weekday === 5 && !isWorkingCode(entry.shift_code)) saturdaysOff[entry.employee_id] += 1;
+          historyShifts += 1;
+        }
+      }
+    }
+
+    // Monthly preferred amounts: "DAY|NUMBER" per employee, or for everyone
+    // when the rule has no employee (a rule for one person overrides it).
+    function parseMonthlyTargets(ruleType: string, ruleList: SavedRule[]) {
+      const targets = new Map<string, Map<number, number>>();
+      for (const rule of ruleList) {
+        if (rule.rule_type !== ruleType) continue;
+        const [dayValue, countValue] = rule.rule_value.split("|");
+        const weekday = normalizeDayName(dayValue || "");
+        const count = Number(countValue);
+        if (weekday === null || !Number.isFinite(count) || count < 0) continue;
+        const who = rule.employee_id || "*";
+        const existing = targets.get(who) ?? new Map<number, number>();
+        existing.set(weekday, Math.floor(count));
+        targets.set(who, existing);
+      }
+      return targets;
+    }
+
+    function monthlyTarget(targets: Map<string, Map<number, number>>, employeeId: string, weekday: number) {
+      return targets.get(employeeId)?.get(weekday) ?? targets.get("*")?.get(weekday);
+    }
 
     const codeAt = (employeeId: string, day: DayInfo) =>
       isApprovedPTO(employeeId, day.offset) ? "PTO" : generated[employeeId][String(day.offset)] ?? "OFF";
 
     function tallyDay(day: DayInfo) {
       for (const employee of employees) {
-        const code = codeAt(employee.id, day);
-        if (isOpener(code)) opens[employee.id] += 1;
-        if (isCloser(code)) closes[employee.id] += 1;
+        recordShift(employee.id, day.date, day.weekday, codeAt(employee.id, day));
       }
     }
 
@@ -728,6 +817,17 @@ export default function SchedulePage() {
         if (allowedRules.length > 0 && !allowedRules.some((rule) => rule.days.includes(weekday))) return false;
         if (blockedShiftDays.some((rule) => rule.shift === shift && rule.days.includes(weekday))) return false;
         return true;
+      }
+
+      const openTargets = parseMonthlyTargets("monthly_open_target", activeRules);
+      const closeTargets = parseMonthlyTargets("monthly_close_target", activeRules);
+
+      /** 0 = still under their monthly target for this day, 1 = no target, 2 = target reached. */
+      function targetPriority(kind: "open" | "close", employee: Employee, day: DayInfo) {
+        const target = monthlyTarget(kind === "open" ? openTargets : closeTargets, employee.id, day.weekday);
+        if (target === undefined) return 1;
+        const count = monthlyCounts[employee.id][monthlyKey(kind, day.date, day.weekday)] ?? 0;
+        return count < target ? 0 : 2;
       }
 
       function chooseOpeningShift(weekday: number, position: number): ShiftCode {
@@ -869,14 +969,28 @@ export default function SchedulePage() {
         const remainingAfterOpeners = Math.max(rotated.length - openerCount, 0);
         const closerCount = Math.min(rules.closersPerDay, remainingAfterOpeners);
 
-        // Openers and closers are whoever has done the fewest so far
-        // (ties keep the rotation order).
+        // Openers and closers: people still under a monthly preferred amount
+        // first, people who have reached it last; then whoever has opened or
+        // closed this weekday the fewest times (this month and last), then the
+        // fewest overall. Ties keep the rotation order.
+        const wd = dayIndex;
         const openersToday = [...rotated]
-          .sort((a, b) => opens[a.id] - opens[b.id])
+          .sort(
+            (a, b) =>
+              targetPriority("open", a, day) - targetPriority("open", b, day) ||
+              Number(targetPriority("close", a, day) === 0) - Number(targetPriority("close", b, day) === 0) ||
+              opensOn[a.id][wd] - opensOn[b.id][wd] ||
+              opens[a.id] - opens[b.id],
+          )
           .slice(0, openerCount);
         const closersToday = rotated
           .filter((employee) => !openersToday.includes(employee))
-          .sort((a, b) => closes[a.id] - closes[b.id])
+          .sort(
+            (a, b) =>
+              targetPriority("close", a, day) - targetPriority("close", b, day) ||
+              closesOn[a.id][wd] - closesOn[b.id][wd] ||
+              closes[a.id] - closes[b.id],
+          )
           .slice(0, closerCount);
 
         rotated.forEach((employee) => {
@@ -920,6 +1034,7 @@ export default function SchedulePage() {
             if (currentHours <= rules.targetHours + 1) break;
 
             generated[employee.id][String(day.offset)] = "OFF";
+            recordShift(employee.id, day.date, day.weekday, defaultShift, -1);
             currentHours -= getShift(defaultShift, shiftOptions).hours;
           }
         }
@@ -947,17 +1062,17 @@ export default function SchedulePage() {
             if (coverage < employeeCount && !isUnavailable && !requiredShift) {
               // Fill a missing closer or opener first, otherwise a regular shift.
               const codesToday = employees.map((other) => generated[other.id][String(day.offset)] ?? "OFF");
+              // (Skipped for someone who has already reached their monthly amount.)
               const fillShift =
-                codesToday.filter(isCloser).length < rules.closersPerDay
+                codesToday.filter(isCloser).length < rules.closersPerDay && targetPriority("close", employee, day) !== 2
                   ? chooseClosingShift(day.weekday)
-                  : codesToday.filter(isOpener).length < rules.openersPerDay
+                  : codesToday.filter(isOpener).length < rules.openersPerDay && targetPriority("open", employee, day) !== 2
                     ? chooseOpeningShift(day.weekday, codesToday.filter(isOpener).length)
                     : defaultShift;
               if (shiftAllowedOnDay(fillShift, day.weekday)) {
                 generated[employee.id][String(day.offset)] = fillShift;
                 currentHours += getShift(fillShift, shiftOptions).hours;
-                if (isCloser(fillShift)) closes[employee.id] += 1;
-                if (isOpener(fillShift)) opens[employee.id] += 1;
+                recordShift(employee.id, day.date, day.weekday, fillShift);
               }
             }
           }
@@ -1058,6 +1173,31 @@ export default function SchedulePage() {
       }
     });
 
+    // Month view: check each monthly preferred amount for the month.
+    if (isMonth) {
+      const monthKey = month.slice(0, 7);
+      const allOpenTargets = parseMonthlyTargets("monthly_open_target", savedRules);
+      const allCloseTargets = parseMonthlyTargets("monthly_close_target", savedRules);
+      for (const employee of employees) {
+        for (const kind of ["open", "close"] as const) {
+          for (const day of WORK_DAYS) {
+            const target = monthlyTarget(kind === "open" ? allOpenTargets : allCloseTargets, employee.id, day.offset);
+            if (target === undefined) continue;
+            const count = monthlyCounts[employee.id][`${kind}|${monthKey}|${day.offset}`] ?? 0;
+            if (count !== target) {
+              warnings.push(
+                `${employee.employee_name}: ${kind === "open" ? "opens" : "closes"} ${count} ${day.name}(s) in ${monthLabel(month)}; preferred amount is ${target}.`,
+              );
+            }
+          }
+        }
+      }
+    }
+
+    const historyNote =
+      historyShifts > 0
+        ? ` Balanced against ${historyShifts} saved shift(s) since ${displayDate(historyStart)}.`
+        : ` No saved schedule found for ${monthLabel(historyStart)}, so balancing starts fresh.`;
     const holidayNote =
       weekHolidays.size > 0
         ? ` Holidays applied: ${Array.from(weekHolidays.values()).map((holiday) => holiday.name).join(", ")}.`
@@ -1074,6 +1214,7 @@ export default function SchedulePage() {
         ? `${scope} successfully using ${rulesUsed} saved rule(s). All main staffing targets were met.`
         : `${scope} using ${rulesUsed} saved rule(s). Review ${warnings.length} warning(s) before saving.`) +
         keptNote +
+        historyNote +
         holidayNote,
     );
     setErrorMessage("");
@@ -1668,7 +1809,7 @@ export default function SchedulePage() {
         <div className="flex flex-wrap gap-2">
           <button
             type="button"
-            onClick={generateStarterSchedule}
+            onClick={() => void generateStarterSchedule()}
             disabled={loading || employees.length === 0}
             className="rounded-lg bg-violet-600 px-4 py-2 font-medium text-white hover:bg-violet-700 disabled:opacity-50"
           >
