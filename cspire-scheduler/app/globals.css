@@ -1,1 +1,21 @@
 @import "tailwindcss";
+/* Print sheets (month on one page, one person's month): only the sheet prints. */
+.print-sheet {
+  display: none;
+}
+@media print {
+  body.printing-sheet > :not(.print-sheet) {
+    display: none !important;
+  }
+  body.printing-sheet {
+    background: white !important;
+  }
+  body.printing-sheet .print-sheet {
+    display: block;
+  }
+  .print-sheet,
+  .print-sheet * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}

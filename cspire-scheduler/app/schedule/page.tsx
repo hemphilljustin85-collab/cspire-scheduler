@@ -41,6 +41,14 @@ import { CHECK_CATEGORIES, checkSchedule, type CheckIssue } from "../../src/lib/
 import { EMPLOYEE_ORDER_RULE, parseEmployeeOrder, sortByEmployeeOrder } from "../../src/lib/employeeOrder";
 import { closingPrefsFor } from "../../src/lib/closingPrefs";
 import { findFix, type FixResult } from "../../src/lib/scheduleFix";
+import {
+  MonthGridSheet,
+  PersonMonthSheet,
+  shortTime,
+  usePrintSheet,
+  type PrintCell,
+} from "../../src/components/PrintSheets";
+import { downloadScheduleExcel } from "../../src/lib/scheduleExcel";
 
 /** A schedule row that can be dragged by its handle (mouse, touch or keyboard). */
 function SortableRow({ id, children }: { id: string; children: (handle: ReactNode) => ReactNode }) {
@@ -312,6 +320,10 @@ export default function SchedulePage() {
   const [customShifts, setCustomShifts] = useState<ShiftDefinition[]>([]);
   const [starterShiftsHidden, setStarterShiftsHidden] = useState(false);
   const [publicStoreSlug, setPublicStoreSlug] = useState("");
+  const [storeName, setStoreName] = useState("");
+  const [printSheet, startPrint] = usePrintSheet();
+  const [printPersonId, setPrintPersonId] = useState("");
+  const [exporting, setExporting] = useState(false);
   const [versions, setVersions] = useState<ScheduleVersion[]>([]);
   const [showHistory, setShowHistory] = useState(false);
 
@@ -436,6 +448,7 @@ export default function SchedulePage() {
     ]);
 
     setPublicStoreSlug(store.public_slug);
+    setStoreName(store.store_name);
     if (error) {
       setErrorMessage(error.message);
       return;
@@ -1641,6 +1654,105 @@ export default function SchedulePage() {
     setMessage("Order reset to A–Z.");
   }
 
+  // ---- Export & print ----
+
+  /** Days to export/print: the month's own days in Month view, the week in Week view. */
+  const outputDays = isMonth ? days.filter((day) => day.inMonth) : days;
+  const outputTitle = isMonth ? `${monthLabel(month)} schedule` : `Schedule · week of ${displayDate(weekStart)}`;
+
+  function printCellFor(employeeId: string, day: DayInfo): PrintCell {
+    const code = grid[employeeId]?.[String(day.offset)] ?? "OFF";
+    const shift = shiftFor(code, day.offset);
+    const working = isWorkingCode(code);
+    const label = code === "OFF" ? "Off" : code === "PTO" ? "PTO" : shift.label;
+    const short =
+      working && shift.start_time
+        ? [shortTime(shift.start_time), shortTime(shift.end_time)]
+        : code === "OFF"
+          ? [""]
+          : code === "PTO"
+            ? ["PTO"]
+            : code === "HOLIDAY"
+              ? ["Hol"]
+              : [code];
+    return { label, short, className: shift.className, hours: shift.hours, working };
+  }
+
+  function printMonthGrid() {
+    const usedCodes = new Set(
+      orderedEmployees.flatMap((employee) => outputDays.map((day) => grid[employee.id]?.[String(day.offset)] ?? "OFF")),
+    );
+    startPrint(
+      <MonthGridSheet
+        title={`${storeName ? `${storeName} · ` : ""}${outputTitle}`}
+        subtitle={`Printed ${new Date().toLocaleDateString()}`}
+        days={outputDays.map((day) => ({ date: day.date, weekday: day.weekday }))}
+        rows={orderedEmployees.map((employee) => {
+          const cells = outputDays.map((day) => printCellFor(employee.id, day));
+          return { id: employee.id, name: employee.employee_name, position: employee.position, cells, total: cells.reduce((sum, cell) => sum + cell.hours, 0) };
+        })}
+        legend={selectableShifts
+          .filter((shift) => shift.code !== "OFF" && usedCodes.has(shift.code))
+          .map((shift) => ({ label: shift.label, className: shift.className }))}
+      />,
+    );
+  }
+
+  function printPerson(employeeId: string) {
+    const employee = employees.find((item) => item.id === employeeId);
+    if (!employee) return;
+    const cellsByDate = new Map(outputDays.map((day) => [day.date, printCellFor(employee.id, day)]));
+    startPrint(
+      <PersonMonthSheet
+        storeName={storeName}
+        name={employee.employee_name}
+        month={isMonth ? month : firstOfMonth(parseLocalDate(weekStart))}
+        cellsByDate={cellsByDate}
+        note={isMonth ? undefined : "Only the week shown on the Schedule page is included. Switch to Month view to print the whole month."}
+      />,
+      "portrait",
+    );
+  }
+
+  async function copyPersonLink(employeeId: string) {
+    const employee = employees.find((item) => item.id === employeeId);
+    const monthParam = (isMonth ? month : firstOfMonth(parseLocalDate(weekStart))).slice(0, 7);
+    const url = `${window.location.origin}/team-schedule?store=${encodeURIComponent(publicStoreSlug)}&view=month&month=${monthParam}&person=${employeeId}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setMessage(
+        `Link to ${employee?.employee_name ?? "their"} schedule copied. It shows their published shifts for the month and has a Print button. They can switch months there too.`,
+      );
+    } catch {
+      window.prompt("Copy this link:", url);
+    }
+  }
+
+  async function exportExcel() {
+    setExporting(true);
+    try {
+      await downloadScheduleExcel({
+        title: `${storeName ? `${storeName} · ` : ""}${outputTitle}`,
+        fileName: isMonth ? `schedule-${month.slice(0, 7)}.xlsx` : `schedule-week-${weekStart}.xlsx`,
+        days: outputDays.map((day) => ({ date: day.date, weekday: day.weekday, weekIndex: day.weekIndex })),
+        weekStarts,
+        rows: orderedEmployees.map((employee) => ({
+          name: employee.employee_name,
+          position: employee.position,
+          cells: outputDays.map((day) => {
+            const code = grid[employee.id]?.[String(day.offset)] ?? "OFF";
+            const cell = printCellFor(employee.id, day);
+            return { ...cell, opener: isOpener(code), closer: isCloser(code) };
+          }),
+        })),
+      });
+      setMessage("Excel file downloaded (Schedule and Summary sheets). It includes any changes you haven't saved yet.");
+    } catch (error) {
+      setErrorMessage(`Couldn't create the Excel file: ${error instanceof Error ? error.message : "unknown error"}`);
+    }
+    setExporting(false);
+  }
+
   /** Run the schedule check on a grid (the one on screen, or a freshly generated one). */
   function runCheck(gridToCheck: ScheduleGrid): CheckIssue[] {
     return checkSchedule({
@@ -2050,6 +2162,60 @@ export default function SchedulePage() {
           </button>
         </div>
       </div>
+
+      {!loading && employees.length > 0 && (
+        <div className="flex flex-col gap-3 rounded-xl bg-white p-4 shadow sm:flex-row sm:flex-wrap sm:items-center">
+          <span className="text-sm font-bold">Export &amp; print</span>
+          <button
+            type="button"
+            onClick={() => void exportExcel()}
+            disabled={exporting}
+            className="rounded-lg border border-emerald-300 px-3 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-50 disabled:opacity-50"
+          >
+            {exporting ? "Creating Excel…" : "Export to Excel"}
+          </button>
+          <button
+            type="button"
+            onClick={printMonthGrid}
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold hover:bg-slate-50"
+          >
+            {isMonth ? "Print month (one page)" : "Print week (one page)"}
+          </button>
+          <span className="hidden h-6 w-px bg-slate-200 sm:block" />
+          <label className="flex items-center gap-2 text-sm">
+            <span className="font-medium">One person</span>
+            <select
+              value={printPersonId}
+              onChange={(event) => setPrintPersonId(event.target.value)}
+              className="rounded-lg border border-slate-300 px-2 py-2"
+            >
+              <option value="">Choose…</option>
+              {orderedEmployees.map((employee) => (
+                <option key={employee.id} value={employee.id}>{employee.employee_name}</option>
+              ))}
+            </select>
+          </label>
+          <button
+            type="button"
+            disabled={!printPersonId}
+            onClick={() => printPerson(printPersonId)}
+            className="rounded-lg border border-slate-300 px-3 py-2 text-sm font-semibold hover:bg-slate-50 disabled:opacity-50"
+          >
+            {isMonth ? "Print their month" : "Print their week"}
+          </button>
+          <button
+            type="button"
+            disabled={!printPersonId || !publicStoreSlug}
+            onClick={() => void copyPersonLink(printPersonId)}
+            className="rounded-lg border border-blue-300 px-3 py-2 text-sm font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+            title="A link they can open on their phone to see and print their own month"
+          >
+            Copy their link
+          </button>
+        </div>
+      )}
+
+      {printSheet}
 
       {!loading && employees.length > 0 && (
         <div
