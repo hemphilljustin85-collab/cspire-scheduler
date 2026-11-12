@@ -3,7 +3,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../src/lib/supabase";
 import { BUILT_IN_SHIFTS, CUSTOM_COLOR_CLASSES } from "../../src/lib/shifts";
-import { MonthGridSheet, PersonMonthSheet, usePrintSheet, type PrintCell } from "../../src/components/PrintSheets";
+import { PersonMonthSheet, ScheduleSheet, usePrintSheet, type PrintCell } from "../../src/components/PrintSheets";
+import type { ScheduleSheetData } from "../../src/lib/scheduleSheet";
 import { addMonths, firstOfMonth, monthWeekStarts, monthWorkDates } from "../../src/lib/monthWeeks";
 
 type Employee = { id: string; employee_name: string; position: string | null; status: string | null };
@@ -194,11 +195,36 @@ export default function TeamSchedulePage() {
       ? `${totalWeeks - publishedWeeks} of ${totalWeeks} weeks in ${monthName(month)} aren't published yet, so those days are blank.`
       : "";
 
-  function monthRows() {
-    return shownEmployees.map((employee) => {
-      const cells = monthDates.map((day) => cellFor(employee.id, day.date));
-      return { id: employee.id, name: employee.employee_name, position: employee.position, cells, total: cells.reduce((sum, cell) => sum + cell.hours, 0) };
-    });
+  // The month laid out like the manager's Schedule page: a block per week.
+  function monthSheet(): ScheduleSheetData {
+    return {
+      title: `${payload?.store.name ? `${payload.store.name} · ` : ""}${monthName(month)} schedule`,
+      subtitle: `Printed ${new Date().toLocaleDateString()}`,
+      weeks: monthWeekStarts(month).map((weekOf) => {
+        const dates = WORK_DAYS.map((name, index) => ({ name, date: addDays(weekOf, index) }));
+        const published = (payload?.entries || []).some((entry) => entry.shift_date >= weekOf && entry.shift_date <= addDays(weekOf, 5));
+        return {
+          label: `Week of ${parseDate(weekOf).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`,
+          status: published ? "Published" : "Not published yet",
+          days: dates.map((day) => ({
+            date: day.date,
+            name: day.name,
+            dateLabel: parseDate(day.date).toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+            inMonth: day.date.slice(0, 7) === month.slice(0, 7),
+          })),
+          rows: shownEmployees.map((employee) => {
+            const cells = dates.map((day) => {
+              const cell = cellFor(employee.id, day.date);
+              return { ...cell, label: cell.label === "Off" ? "OFF" : cell.label, className: cell.label === "Off" ? "bg-slate-100 text-slate-700" : cell.className, opener: false, closer: false };
+            });
+            const hours = cells.reduce((sum, cell) => sum + cell.hours, 0);
+            return { id: employee.id, name: employee.employee_name, position: employee.position, cells, hours, hoursClassName: "bg-slate-100 text-slate-800" };
+          }),
+          footer: dates.map((day) => `${(payload?.employees || []).filter((employee) => cellFor(employee.id, day.date).working).length} working`),
+        };
+      }),
+      legend,
+    };
   }
 
   const legend = Array.from(shiftMap.entries())
@@ -225,15 +251,7 @@ export default function TeamSchedulePage() {
     }
     if (person) startPrint(personSheet(), "portrait");
     else
-      startPrint(
-        <MonthGridSheet
-          title={`${payload.store.name} · ${monthName(month)} schedule`}
-          subtitle={`Printed ${new Date().toLocaleDateString()}`}
-          days={monthDates}
-          rows={monthRows()}
-          legend={legend}
-        />,
-      );
+      startPrint(<ScheduleSheet data={monthSheet()} />);
   }
 
   const hours = useMemo(() => {
@@ -301,7 +319,7 @@ export default function TeamSchedulePage() {
               <div className="min-w-[640px]">{personSheet()}</div>
             ) : (
               <div className="min-w-[1000px]">
-                <MonthGridSheet title={`${monthName(month)} schedule`} days={monthDates} rows={monthRows()} legend={legend} />
+                <ScheduleSheet data={monthSheet()} fitToPage={false} />
               </div>
             )}
           </div>
