@@ -58,7 +58,18 @@ export type CheckInput = {
 const WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 /** Order categories are shown in. */
-export const CHECK_CATEGORIES = ["Not started", "Coverage", "Rules", "Days off", "Saturdays off", "Hours", "Short rest", "Monthly amounts"];
+export const CHECK_CATEGORIES = ["Not started", "Coverage", "Rules", "Days off", "Saturdays off", "Hours", "Short rest", "Fairness", "Monthly amounts"];
+
+/** Someone this far from what most people got this month is flagged. */
+export const FAIRNESS_GAP = 2;
+
+/** The middle value (what "most people" got), rounded to a whole number. */
+function typical(values: number[]) {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return Math.round(sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2);
+}
 
 /** Less rest than this between one shift's end and the next day's start is flagged. */
 export const MIN_REST_HOURS = 10;
@@ -269,6 +280,53 @@ export function checkSchedule(input: CheckInput): CheckIssue[] {
         const off = saturdays.filter((day) => !input.isWorking(codeAt(employee.id, day.offset))).length;
         if (off === 0) {
           add({ severity: "heads-up", category: "Saturdays off", employeeId: employee.id, message: `${employee.employee_name} has no Saturday off in ${monthName}.` });
+        }
+      }
+    }
+
+    // Fairness: compare each person's closes, opens and Saturday closes this
+    // month with what most people got.
+    if (monthComplete && employees.length >= 3) {
+      const count = (employeeId: string, test: (code: string, day: CheckDay) => boolean) =>
+        monthDays.filter((day) => test(codeAt(employeeId, day.offset), day)).length;
+      const workedDays = new Map(employees.map((employee) => [employee.id, count(employee.id, (code) => input.isWorking(code))]));
+      const typicalWorked = typical([...workedDays.values()]);
+
+      // People with a monthly preferred amount for a day are expected to differ on that day.
+      const hasTarget = (employeeId: string, ruleType: string, weekday?: number) =>
+        savedRules.some(
+          (rule) =>
+            rule.rule_type === ruleType &&
+            (rule.employee_id === employeeId || !rule.employee_id) &&
+            (weekday === undefined || weekdayIndex(rule.rule_value.split("|")[0] || "") === weekday),
+        );
+
+      const measures: Array<{ verb: string; noun: string; test: (code: string, day: CheckDay) => boolean; skip: (employeeId: string) => boolean }> = [
+        { verb: "closes", noun: "times", test: (code) => input.isCloser(code), skip: (id) => hasTarget(id, "monthly_close_target") },
+        { verb: "opens", noun: "times", test: (code) => input.isOpener(code), skip: (id) => hasTarget(id, "monthly_open_target") },
+        { verb: "closes", noun: "Saturdays", test: (code, day) => day.weekday === 5 && input.isCloser(code), skip: (id) => hasTarget(id, "monthly_close_target", 5) },
+      ];
+
+      for (const measure of measures) {
+        const compared = employees.filter((employee) => !measure.skip(employee.id));
+        if (compared.length < 3) continue;
+        const counts = new Map(compared.map((employee) => [employee.id, count(employee.id, measure.test)]));
+        const usual = typical([...counts.values()]);
+        for (const employee of compared) {
+          const value = counts.get(employee.id) ?? 0;
+          if (Math.abs(value - usual) < FAIRNESS_GAP) continue;
+          const worked = workedDays.get(employee.id) ?? 0;
+          const context =
+            Math.abs(worked - typicalWorked) >= 3
+              ? ` (worked ${worked} days; most worked ${typicalWorked})`
+              : "";
+          const unit = measure.noun === "times" ? (value === 1 ? "time" : "times") : value === 1 ? "Saturday" : "Saturdays";
+          add({
+            severity: "heads-up",
+            category: "Fairness",
+            employeeId: employee.id,
+            message: `${employee.employee_name} ${measure.verb} ${value} ${unit} in ${monthName}; most people ${measure.verb === "closes" ? "close" : "open"} ${usual}${context}.`,
+          });
         }
       }
     }
