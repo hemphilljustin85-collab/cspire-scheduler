@@ -1,11 +1,11 @@
 # Builds the Workforce Scheduler iPhone app and uploads it to TestFlight.
-# Setup steps: cspire-scheduler/IOS_APP.md
+# Setup steps: workforce-scheduler/IOS_APP.md
 workflows:
   ios-testflight:
     name: iPhone app → TestFlight
     max_build_duration: 60
     instance_type: mac_mini_m2
-    working_directory: cspire-scheduler
+    working_directory: workforce-scheduler
     integrations:
       # The name of your App Store Connect API key in Codemagic
       # (Teams → Integrations → Developer Portal). Change it if yours is different.
