@@ -42,13 +42,14 @@ import { EMPLOYEE_ORDER_RULE, parseEmployeeOrder, sortByEmployeeOrder } from "..
 import { closingPrefsFor } from "../../src/lib/closingPrefs";
 import { findFix, type FixContext, type FixResult } from "../../src/lib/scheduleFix";
 import {
-  MonthGridSheet,
   PersonMonthSheet,
+  ScheduleSheet,
   shortTime,
   usePrintSheet,
   type PrintCell,
 } from "../../src/components/PrintSheets";
 import { downloadScheduleExcel } from "../../src/lib/scheduleExcel";
+import { hoursClassName, type ScheduleSheetData } from "../../src/lib/scheduleSheet";
 import { isManagerPosition, parsePositions, POSITIONS_RULE } from "../../src/lib/positions";
 import { appliesOn, repairSelection, requirementsFromRules } from "../../src/lib/positionRequirements";
 
@@ -1712,24 +1713,60 @@ export default function SchedulePage() {
     return { label, short, className: shift.className, hours: shift.hours, working };
   }
 
+  /** The schedule as it looks on screen (week blocks), for print and Excel. */
+  function buildSheetData(): ScheduleSheetData {
+    return {
+      title: `${storeName ? `${storeName} · ` : ""}${outputTitle}`,
+      subtitle: `Printed ${new Date().toLocaleDateString()}`,
+      weeks: weekStarts.map((weekOf, weekIndex) => {
+        const weekDays = days.filter((day) => day.weekIndex === weekIndex);
+        return {
+          label: `Week of ${displayDate(weekOf)}`,
+          status: isMonth ? weekRecords[weekOf]?.status || "Not saved" : undefined,
+          days: weekDays.map((day) => {
+            const holiday = weekHolidays.get(day.offset);
+            return {
+              date: day.date,
+              name: day.name,
+              dateLabel: displayDate(day.date),
+              inMonth: day.inMonth,
+              holiday: Boolean(holiday),
+              note: holiday
+                ? `★ ${holiday.name} · ${holiday.mode === "closed" ? "closed" : "short day"}`
+                : `${dailyCoverage[day.offset]?.openers ?? 0} open · ${dailyCoverage[day.offset]?.closers ?? 0} close`,
+            };
+          }),
+          rows: orderedEmployees.map((employee) => {
+            const hours = hoursByWeek[employee.id]?.[weekIndex] ?? 0;
+            return {
+              id: employee.id,
+              name: employee.employee_name,
+              position: employee.position,
+              hours,
+              hoursClassName: hoursClassName(hours, rules.targetHours),
+              cells: weekDays.map((day) => {
+                const code = grid[employee.id]?.[String(day.offset)] ?? "OFF";
+                const shift = shiftFor(code, day.offset);
+                return {
+                  label: shift.label,
+                  className: shift.className,
+                  hours: shift.hours,
+                  working: isWorkingCode(code),
+                  opener: isOpener(code),
+                  closer: isCloser(code),
+                };
+              }),
+            };
+          }),
+          footer: weekDays.map((day) => `${dailyCoverage[day.offset]?.working ?? 0} working`),
+        };
+      }),
+      legend: selectableShifts.map((shift) => ({ label: `${shift.label} · ${shift.hours} hrs`, className: shift.className })),
+    };
+  }
+
   function printMonthGrid() {
-    const usedCodes = new Set(
-      orderedEmployees.flatMap((employee) => outputDays.map((day) => grid[employee.id]?.[String(day.offset)] ?? "OFF")),
-    );
-    startPrint(
-      <MonthGridSheet
-        title={`${storeName ? `${storeName} · ` : ""}${outputTitle}`}
-        subtitle={`Printed ${new Date().toLocaleDateString()}`}
-        days={outputDays.map((day) => ({ date: day.date, weekday: day.weekday }))}
-        rows={orderedEmployees.map((employee) => {
-          const cells = outputDays.map((day) => printCellFor(employee.id, day));
-          return { id: employee.id, name: employee.employee_name, position: employee.position, cells, total: cells.reduce((sum, cell) => sum + cell.hours, 0) };
-        })}
-        legend={selectableShifts
-          .filter((shift) => shift.code !== "OFF" && usedCodes.has(shift.code))
-          .map((shift) => ({ label: shift.label, className: shift.className }))}
-      />,
-    );
+    startPrint(<ScheduleSheet data={buildSheetData()} />);
   }
 
   function printPerson(employeeId: string) {
@@ -1766,21 +1803,10 @@ export default function SchedulePage() {
     setExporting(true);
     try {
       await downloadScheduleExcel({
-        title: `${storeName ? `${storeName} · ` : ""}${outputTitle}`,
+        data: buildSheetData(),
         fileName: isMonth ? `schedule-${month.slice(0, 7)}.xlsx` : `schedule-week-${weekStart}.xlsx`,
-        days: outputDays.map((day) => ({ date: day.date, weekday: day.weekday, weekIndex: day.weekIndex })),
-        weekStarts,
-        rows: orderedEmployees.map((employee) => ({
-          name: employee.employee_name,
-          position: employee.position,
-          cells: outputDays.map((day) => {
-            const code = grid[employee.id]?.[String(day.offset)] ?? "OFF";
-            const cell = printCellFor(employee.id, day);
-            return { ...cell, opener: isOpener(code), closer: isCloser(code) };
-          }),
-        })),
       });
-      setMessage("Excel file downloaded (Schedule and Summary sheets). It includes any changes you haven't saved yet.");
+      setMessage("Excel file downloaded. The Schedule sheet is laid out like this page; the Summary sheet has each person's totals. It includes any changes you haven't saved yet.");
     } catch (error) {
       setErrorMessage(`Couldn't create the Excel file: ${error instanceof Error ? error.message : "unknown error"}`);
     }

@@ -1,161 +1,184 @@
-// Excel (.xlsx) export of the schedule on screen.
-// exceljs is loaded only when someone exports, so it doesn't slow down the page.
+// Excel (.xlsx) export laid out like the Schedule page: a block per week with
+// the dark day-header row, each person's name and position, coloured shifts,
+// an hours badge and daily coverage. Plus a Summary sheet of monthly totals.
+// exceljs is loaded only when someone exports, so it doesn't slow the page.
 
-export type ExcelCell = { label: string; className: string; hours: number; working: boolean; opener: boolean; closer: boolean };
-export type ExcelDay = { date: string; weekday: number; weekIndex: number };
-export type ExcelRow = { name: string; position?: string | null; cells: ExcelCell[] };
+import { shiftColors, type ScheduleSheetData } from "./scheduleSheet";
 
-const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-
-// Tailwind -100 background colours used for shifts, as Excel fills.
-const FILLS: Record<string, string> = {
-  slate: "F1F5F9", gray: "F3F4F6", zinc: "F4F4F5", red: "FEE2E2", orange: "FFEDD5", amber: "FEF3C7",
-  yellow: "FEF9C3", lime: "ECFCCB", green: "DCFCE7", emerald: "D1FAE5", teal: "CCFBF1", cyan: "CFFAFE",
-  sky: "E0F2FE", blue: "DBEAFE", indigo: "E0E7FF", violet: "EDE9FE", purple: "F3E8FF", fuchsia: "FAE8FF",
-  pink: "FCE7F3", rose: "FFE4E6",
-};
-
-function fillFor(className: string) {
-  const match = className.match(/bg-([a-z]+)-\d+/);
-  return match ? FILLS[match[1]] : undefined;
-}
-
-function parseDate(value: string) {
-  const [year, month, day] = value.split("-").map(Number);
-  return new Date(year, month - 1, day);
-}
-
-function shortDate(value: string) {
-  return parseDate(value).toLocaleDateString("en-US", { month: "numeric", day: "numeric" });
-}
-
-export async function downloadScheduleExcel({
-  title,
-  fileName,
-  days,
-  weekStarts,
-  rows,
-}: {
-  title: string;
-  fileName: string;
-  days: ExcelDay[];
-  weekStarts: string[];
-  rows: ExcelRow[];
-}) {
+export async function downloadScheduleExcel({ data, fileName }: { data: ScheduleSheetData; fileName: string }) {
   const { default: ExcelJS } = await import("exceljs");
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Workforce Scheduler";
   workbook.created = new Date();
 
-  const thin = { style: "thin" as const, color: { argb: "FF94A3B8" } };
-  const border = { top: thin, left: thin, bottom: thin, right: thin };
-  const header = (cell: import("exceljs").Cell) => {
-    cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
-    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF0F172A" } };
-    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
-    cell.border = border;
-  };
-  const weeksShown = weekStarts.map((_, index) => index).filter((index) => days.some((day) => day.weekIndex === index));
+  const line = (argb: string) => ({ style: "thin" as const, color: { argb } });
+  const border = { top: line("FFCBD5E1"), left: line("FFCBD5E1"), bottom: line("FFCBD5E1"), right: line("FFCBD5E1") };
+  const solid = (hex: string) => ({ type: "pattern" as const, pattern: "solid" as const, fgColor: { argb: `FF${hex}` } });
+  const dayCount = Math.max(...data.weeks.map((week) => week.days.length), 6);
+  const hoursColumn = dayCount + 2;
 
-  // --- Schedule sheet: one row per person, one column per day ---
+  // --- Schedule sheet ---
   const sheet = workbook.addWorksheet("Schedule", {
-    views: [{ state: "frozen", xSplit: 2, ySplit: 3 }],
-    pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 1 },
+    pageSetup: {
+      orientation: "landscape",
+      fitToPage: true,
+      fitToWidth: 1,
+      fitToHeight: 1,
+      margins: { left: 0.25, right: 0.25, top: 0.3, bottom: 0.3, header: 0.1, footer: 0.1 },
+    },
   });
-  sheet.getCell(1, 1).value = title;
-  sheet.getCell(1, 1).font = { bold: true, size: 14 };
+  sheet.getColumn(1).width = 24;
+  for (let column = 2; column <= dayCount + 1; column += 1) sheet.getColumn(column).width = 17;
+  sheet.getColumn(hoursColumn).width = 10;
 
-  const dayColumn = (index: number) => 3 + index;
-  const weekColumn = (position: number) => 3 + days.length + position;
-  const totalColumn = 3 + days.length + weeksShown.length;
+  let rowNumber = 1;
+  const title = sheet.getCell(rowNumber, 1);
+  title.value = data.title;
+  title.font = { bold: true, size: 16 };
+  if (data.subtitle) {
+    sheet.getCell(rowNumber, hoursColumn).value = data.subtitle;
+    sheet.getCell(rowNumber, hoursColumn).alignment = { horizontal: "right" };
+    sheet.getCell(rowNumber, hoursColumn).font = { color: { argb: "FF64748B" } };
+  }
+  rowNumber += 2;
 
-  const headerRow = sheet.getRow(3);
-  headerRow.getCell(1).value = "Name";
-  headerRow.getCell(2).value = "Position";
-  days.forEach((day, index) => {
-    headerRow.getCell(dayColumn(index)).value = `${WEEKDAYS[day.weekday]}\n${shortDate(day.date)}`;
-  });
-  weeksShown.forEach((weekIndex, position) => {
-    headerRow.getCell(weekColumn(position)).value = `Hours\nwk of ${shortDate(weekStarts[weekIndex])}`;
-  });
-  headerRow.getCell(totalColumn).value = "Total\nhours";
-  headerRow.height = 30;
-  for (let column = 1; column <= totalColumn; column += 1) header(headerRow.getCell(column));
+  for (const week of data.weeks) {
+    if (data.weeks.length > 1) {
+      const label = sheet.getCell(rowNumber, 1);
+      label.value = week.status ? `${week.label}  ·  ${week.status}` : week.label;
+      label.font = { bold: true, size: 12 };
+      rowNumber += 1;
+    }
 
-  rows.forEach((row, rowIndex) => {
-    const excelRow = sheet.getRow(4 + rowIndex);
-    excelRow.getCell(1).value = row.name;
-    excelRow.getCell(1).font = { bold: true };
-    excelRow.getCell(2).value = row.position || "";
-    row.cells.forEach((cell, index) => {
-      const target = excelRow.getCell(dayColumn(index));
-      target.value = cell.label === "Off" ? "Off" : cell.label;
-      const fill = cell.label === "Off" ? undefined : fillFor(cell.className);
-      if (fill) target.fill = { type: "pattern", pattern: "solid", fgColor: { argb: `FF${fill}` } };
-      if (cell.label === "Off") target.font = { color: { argb: "FF94A3B8" } };
-      target.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+    // Header row: dark, like the app.
+    const header = sheet.getRow(rowNumber);
+    header.height = week.days.some((day) => day.holiday) ? 58 : week.days.some((day) => day.note) ? 44 : 32;
+    header.getCell(1).value = "Employee";
+    week.days.forEach((day, index) => {
+      // Days from the next/previous month get a lighter header and italic shifts.
+      header.getCell(index + 2).value = [day.name, day.dateLabel, day.note].filter(Boolean).join("\n");
+      if (!day.inMonth) header.getCell(index + 2).fill = solid("334155");
     });
-    weeksShown.forEach((weekIndex, position) => {
-      const hours = row.cells.reduce((sum, cell, index) => (days[index].weekIndex === weekIndex ? sum + cell.hours : sum), 0);
-      excelRow.getCell(weekColumn(position)).value = Math.round(hours * 100) / 100;
+    header.getCell(hoursColumn).value = "Hours";
+    for (let column = 1; column <= hoursColumn; column += 1) {
+      const cell = header.getCell(column);
+      if (!cell.fill || (cell.fill as { fgColor?: { argb?: string } }).fgColor?.argb !== "FF334155") cell.fill = solid("0F172A");
+      cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+      cell.alignment = { horizontal: column === 1 ? "left" : "center", vertical: "middle", wrapText: true };
+      cell.border = border;
+    }
+    week.days.forEach((day, index) => {
+      if (day.holiday) header.getCell(index + 2).font = { bold: true, color: { argb: "FFFDE68A" } };
     });
-    excelRow.getCell(totalColumn).value = Math.round(row.cells.reduce((sum, cell) => sum + cell.hours, 0) * 100) / 100;
-    excelRow.getCell(totalColumn).font = { bold: true };
-    for (let column = 1; column <= totalColumn; column += 1) excelRow.getCell(column).border = border;
-  });
+    rowNumber += 1;
 
-  // Coverage rows under the schedule.
-  const coverageStart = 4 + rows.length + 1;
-  [
-    { label: "Openers", test: (cell: ExcelCell) => cell.opener },
-    { label: "Closers", test: (cell: ExcelCell) => cell.closer },
-    { label: "Working", test: (cell: ExcelCell) => cell.working },
-  ].forEach((measure, index) => {
-    const excelRow = sheet.getRow(coverageStart + index);
-    excelRow.getCell(1).value = measure.label;
-    excelRow.getCell(1).font = { bold: true, italic: true };
-    days.forEach((_, dayIndex) => {
-      const cell = excelRow.getCell(dayColumn(dayIndex));
-      cell.value = rows.filter((row) => measure.test(row.cells[dayIndex])).length;
-      cell.alignment = { horizontal: "center" };
-      cell.font = { italic: true };
+    // A row per person.
+    for (const person of week.rows) {
+      const row = sheet.getRow(rowNumber);
+      // Taller when a label needs two lines (e.g. "Thanksgiving (off, paid)").
+      row.height = person.cells.some((cell) => cell.label.length > 15) ? 34 : 30;
+      row.getCell(1).value = {
+        richText: [
+          { text: person.name, font: { bold: true, size: 11 } },
+          { text: `\n${person.position || "No position"}`, font: { size: 8, color: { argb: "FF64748B" } } },
+        ],
+      };
+      row.getCell(1).alignment = { vertical: "middle", wrapText: true };
+      person.cells.forEach((shift, index) => {
+        const cell = row.getCell(index + 2);
+        cell.value = shift.label;
+        const colors = shiftColors(shift.className);
+        if (colors) {
+          cell.fill = solid(colors.fill);
+          cell.font = { bold: true, color: { argb: `FF${colors.text}` }, italic: !week.days[index]?.inMonth };
+        }
+        cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+      });
+      const hours = row.getCell(hoursColumn);
+      hours.value = Math.round(person.hours * 100) / 100;
+      hours.numFmt = "0.00";
+      const hoursColors = shiftColors(person.hoursClassName);
+      if (hoursColors) {
+        hours.fill = solid(hoursColors.fill);
+        hours.font = { bold: true, color: { argb: `FF${hoursColors.text}` } };
+      }
+      hours.alignment = { horizontal: "center", vertical: "middle" };
+      for (let column = 1; column <= hoursColumn; column += 1) row.getCell(column).border = border;
+      rowNumber += 1;
+    }
+
+    // Daily coverage row.
+    const footer = sheet.getRow(rowNumber);
+    footer.getCell(1).value = "Daily coverage";
+    week.footer.forEach((text, index) => {
+      footer.getCell(index + 2).value = text;
     });
+    for (let column = 1; column <= hoursColumn; column += 1) {
+      const cell = footer.getCell(column);
+      cell.fill = solid("F1F5F9");
+      cell.font = { bold: true };
+      cell.alignment = { horizontal: column === 1 ? "left" : "center" };
+      cell.border = border;
+    }
+    rowNumber += 2;
+  }
+
+  // Shift legend.
+  if (data.legend.length > 0) {
+    sheet.getCell(rowNumber, 1).value = "Shift legend";
+    sheet.getCell(rowNumber, 1).font = { bold: true };
+    data.legend.forEach((item, index) => {
+      const cell = sheet.getCell(rowNumber, index + 2);
+      cell.value = item.label;
+      const colors = shiftColors(item.className);
+      if (colors) {
+        cell.fill = solid(colors.fill);
+        cell.font = { bold: true, color: { argb: `FF${colors.text}` } };
+      }
+      cell.alignment = { horizontal: "center", wrapText: true };
+    });
+  }
+
+  // --- Summary sheet: totals per person for the days in the month (or week) ---
+  const summary = workbook.addWorksheet("Summary", {
+    views: [{ state: "frozen", ySplit: 1 }],
+    pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: 0 },
   });
-
-  sheet.getColumn(1).width = 22;
-  sheet.getColumn(2).width = 14;
-  days.forEach((_, index) => (sheet.getColumn(dayColumn(index)).width = 11));
-  weeksShown.forEach((_, position) => (sheet.getColumn(weekColumn(position)).width = 11));
-  sheet.getColumn(totalColumn).width = 9;
-
-  // --- Summary sheet: totals per person ---
-  const summary = workbook.addWorksheet("Summary", { views: [{ state: "frozen", ySplit: 1 }] });
-  const summaryHeaders = ["Name", "Position", "Total hours", "Days scheduled", "Opens", "Closes", "Saturday closes", "Saturdays off", "PTO days"];
-  summaryHeaders.forEach((text, index) => {
+  const headers = ["Name", "Position", "Hours", "Days scheduled", "Opens", "Closes", "Saturday closes", "Saturdays off", "PTO days"];
+  headers.forEach((text, index) => {
     const cell = summary.getRow(1).getCell(index + 1);
     cell.value = text;
-    header(cell);
+    cell.fill = solid("0F172A");
+    cell.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+    cell.border = border;
   });
-  rows.forEach((row, rowIndex) => {
-    const saturdays = row.cells.filter((_, index) => days[index].weekday === 5);
+  const people = data.weeks[0]?.rows ?? [];
+  people.forEach((person, index) => {
+    const cells = data.weeks.flatMap((week) => {
+      const row = week.rows.find((item) => item.id === person.id);
+      return row ? row.cells.map((cell, dayIndex) => ({ cell, day: week.days[dayIndex] })).filter(({ day }) => day?.inMonth) : [];
+    });
+    const saturdays = cells.filter(({ day }) => day.name === "Saturday");
     const values = [
-      row.name,
-      row.position || "",
-      Math.round(row.cells.reduce((sum, cell) => sum + cell.hours, 0) * 100) / 100,
-      row.cells.filter((cell) => cell.working).length,
-      row.cells.filter((cell) => cell.opener).length,
-      row.cells.filter((cell) => cell.closer).length,
-      saturdays.filter((cell) => cell.closer).length,
-      saturdays.filter((cell) => !cell.working).length,
-      row.cells.filter((cell) => cell.label === "PTO").length,
+      person.name,
+      person.position || "",
+      Math.round(cells.reduce((sum, { cell }) => sum + cell.hours, 0) * 100) / 100,
+      cells.filter(({ cell }) => cell.working).length,
+      cells.filter(({ cell }) => cell.opener).length,
+      cells.filter(({ cell }) => cell.closer).length,
+      saturdays.filter(({ cell }) => cell.closer).length,
+      saturdays.filter(({ cell }) => !cell.working).length,
+      cells.filter(({ cell }) => cell.label === "PTO").length,
     ];
-    values.forEach((value, index) => {
-      const cell = summary.getRow(2 + rowIndex).getCell(index + 1);
+    values.forEach((value, column) => {
+      const cell = summary.getRow(index + 2).getCell(column + 1);
       cell.value = value;
       cell.border = border;
+      if (column > 1) cell.alignment = { horizontal: "center" };
     });
   });
-  summary.columns.forEach((column, index) => (column.width = index === 0 ? 22 : 15));
+  summary.columns.forEach((column, index) => (column.width = index === 0 ? 22 : index === 1 ? 20 : 13));
 
   const buffer = await workbook.xlsx.writeBuffer();
   const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
