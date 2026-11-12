@@ -6,3 +6,5 @@ node_modules/
 *.log
 *.tsbuildinfo
 .DS_Store
+out/
+.ios-build-parked/

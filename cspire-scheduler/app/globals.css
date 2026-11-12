@@ -19,3 +19,39 @@
     print-color-adjust: exact;
   }
 }
+
+/* iPhone notch / home indicator (the app uses the full screen). On devices
+   and browsers without them these values are 0, so nothing changes. */
+body {
+  padding-top: env(safe-area-inset-top);
+}
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0 0 auto 0;
+  height: env(safe-area-inset-top);
+  background: #0f172a;
+  z-index: 60;
+  pointer-events: none;
+}
+.safe-sticky-top {
+  top: env(safe-area-inset-top);
+}
+.safe-pad-top-only {
+  padding-top: env(safe-area-inset-top);
+}
+/* App-only, so the website's spacing stays exactly as it was. */
+.native-app .safe-pad-top {
+  padding-top: calc(env(safe-area-inset-top) + 1.5rem);
+}
+.native-app .safe-pad-bottom {
+  padding-bottom: calc(env(safe-area-inset-bottom) + 1rem);
+}
+@media print {
+  body {
+    padding-top: 0;
+  }
+  body::before {
+    display: none;
+  }
+}

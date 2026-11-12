@@ -3,6 +3,7 @@
 // an hours badge and daily coverage. Plus a Summary sheet of monthly totals.
 // exceljs is loaded only when someone exports, so it doesn't slow the page.
 
+import { saveFile } from "./native";
 import { shiftColors, type ScheduleSheetData } from "./scheduleSheet";
 
 export async function downloadScheduleExcel({ data, fileName }: { data: ScheduleSheetData; fileName: string }) {
@@ -182,12 +183,6 @@ export async function downloadScheduleExcel({ data, fileName }: { data: Schedule
 
   const buffer = await workbook.xlsx.writeBuffer();
   const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = fileName;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  window.setTimeout(() => URL.revokeObjectURL(url), 2000);
+  // Downloads on the website; opens the share sheet (Save to Files, Mail, …) in the iPhone app.
+  await saveFile(fileName, blob);
 }

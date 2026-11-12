@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { supabase } from "../../src/lib/supabase";
 import { getCurrentStore } from "../../src/lib/store";
+import { publicSiteUrl } from "../../src/lib/native";
 
 type Member = { id: string; name: string | null; email: string | null; role: string | null };
 type Invite = { id: string; email: string; role: string; invite_code: string; expires_at: string; used_at: string | null };
@@ -41,7 +42,7 @@ export default function StoreTeamPage() {
     });
     setSaving(false);
     if (inviteError) return setError(inviteError.message);
-    const link = `${window.location.origin}/login?invite=${code}`;
+    const link = `${publicSiteUrl() || window.location.origin}/login?invite=${code}`;
     await navigator.clipboard?.writeText(link);
     setMessage(`Invite link copied for ${email}. It expires in 7 days.`);
     setEmail("");
@@ -49,7 +50,7 @@ export default function StoreTeamPage() {
   }
 
   async function copyInvite(invite: Invite) {
-    await navigator.clipboard.writeText(`${window.location.origin}/login?invite=${invite.invite_code}`);
+    await navigator.clipboard.writeText(`${publicSiteUrl() || window.location.origin}/login?invite=${invite.invite_code}`);
     setMessage("Invite link copied.");
   }
 

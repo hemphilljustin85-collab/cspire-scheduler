@@ -1,0 +1,57 @@
+# Builds the Workforce Scheduler iPhone app and uploads it to TestFlight.
+# Setup steps: cspire-scheduler/IOS_APP.md
+workflows:
+  ios-testflight:
+    name: iPhone app → TestFlight
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    working_directory: cspire-scheduler
+    integrations:
+      # The name of your App Store Connect API key in Codemagic
+      # (Teams → Integrations → Developer Portal). Change it if yours is different.
+      app_store_connect: codemagic
+    environment:
+      groups:
+        # Codemagic environment group with:
+        #   NEXT_PUBLIC_SUPABASE_URL       (same as on Vercel)
+        #   NEXT_PUBLIC_SUPABASE_ANON_KEY  (same as on Vercel)
+        #   NEXT_PUBLIC_SITE_URL           (your website, e.g. https://your-app.vercel.app)
+        #   APP_STORE_APPLE_ID             (optional: the app's Apple ID number in App Store Connect)
+        - workforce_scheduler
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: com.hemphill.workforcescheduler
+      vars:
+        XCODE_PROJECT: ios/App/App.xcodeproj
+        XCODE_SCHEME: App
+      node: 22
+      xcode: latest
+    # Started by hand in Codemagic (Start new build), so merges don't use build minutes.
+    scripts:
+      - name: Install packages
+        script: npm ci
+      - name: Build the app's copy of the scheduler
+        script: npm run build:ios
+      - name: Copy it into the iOS project
+        script: npx cap sync ios
+      - name: Set up code signing
+        script: xcode-project use-profiles
+      - name: Set the build number
+        script: |
+          if [ -n "$APP_STORE_APPLE_ID" ]; then
+            LATEST=$(app-store-connect get-latest-testflight-build-number "$APP_STORE_APPLE_ID" || echo 0)
+            NEXT=$((LATEST + 1))
+          else
+            NEXT=$BUILD_NUMBER
+          fi
+          echo "Build number: $NEXT"
+          cd ios/App && agvtool new-version -all "$NEXT"
+      - name: Build the .ipa
+        script: xcode-project build-ipa --project "$XCODE_PROJECT" --scheme "$XCODE_SCHEME"
+    artifacts:
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
+    publishing:
+      app_store_connect:
+        auth: integration
+        submit_to_testflight: true

@@ -6,6 +6,7 @@ import { BUILT_IN_SHIFTS, CUSTOM_COLOR_CLASSES } from "../../src/lib/shifts";
 import { PersonMonthSheet, ScheduleSheet, usePrintSheet, type PrintCell } from "../../src/components/PrintSheets";
 import type { ScheduleSheetData } from "../../src/lib/scheduleSheet";
 import { addMonths, firstOfMonth, monthWeekStarts, monthWorkDates } from "../../src/lib/monthWeeks";
+import { printPage, publicSiteUrl, shareLink } from "../../src/lib/native";
 
 type Employee = { id: string; employee_name: string; position: string | null; status: string | null };
 type Schedule = { id: string; week_start: string; status: string; updated_at: string | null };
@@ -246,7 +247,7 @@ export default function TeamSchedulePage() {
 
   function print() {
     if (view === "week" || !payload) {
-      window.print();
+      void printPage("Team schedule");
       return;
     }
     if (person) startPrint(personSheet(), "portrait");
@@ -301,7 +302,7 @@ export default function TeamSchedulePage() {
               <div className="flex flex-wrap gap-2">
                 <button onClick={() => move(-1)} className="rounded-lg border border-slate-600 px-4 py-2">Previous</button>
                 <button onClick={() => move(1)} className="rounded-lg border border-slate-600 px-4 py-2">Next</button>
-                <button onClick={() => void (navigator.share ? navigator.share({ title: `${payload?.store.name || "Store"} schedule`, url: window.location.href }) : navigator.clipboard.writeText(window.location.href))} className="rounded-lg bg-blue-600 px-4 py-2 font-semibold">Share</button>
+                <button onClick={() => void shareLink(`${payload?.store.name || "Store"} schedule`, `${publicSiteUrl() || window.location.origin}${window.location.pathname}${window.location.search}`)} className="rounded-lg bg-blue-600 px-4 py-2 font-semibold">Share</button>
                 <button onClick={print} className="rounded-lg bg-white px-4 py-2 font-semibold text-slate-950">Print</button>
               </div>
             </div>

@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../src/lib/supabase";
+import { publicSiteUrl } from "../../src/lib/native";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -65,7 +66,7 @@ export default function LoginPage() {
         email: email.trim(),
         password,
         options: {
-          emailRedirectTo: `${window.location.origin}/login?confirmed=1`,
+          emailRedirectTo: `${publicSiteUrl() || window.location.origin}/login?confirmed=1`,
           data: {
             full_name: fullName.trim(),
             store_name: storeName.trim(),

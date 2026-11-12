@@ -49,6 +49,7 @@ import {
   type PrintCell,
 } from "../../src/components/PrintSheets";
 import { downloadScheduleExcel } from "../../src/lib/scheduleExcel";
+import { isNativeApp, publicSiteUrl } from "../../src/lib/native";
 import { hoursClassName, type ScheduleSheetData } from "../../src/lib/scheduleSheet";
 import { isManagerPosition, parsePositions, POSITIONS_RULE } from "../../src/lib/positions";
 import { appliesOn, repairSelection, requirementsFromRules } from "../../src/lib/positionRequirements";
@@ -1625,7 +1626,12 @@ export default function SchedulePage() {
         weekStarts.find((start) => start.slice(0, 7) === month.slice(0, 7)) ??
         rangeStart
       : weekStart;
-    const shareUrl = `${window.location.origin}/team-schedule?store=${encodeURIComponent(publicStoreSlug)}&week=${linkWeek}`;
+    const site = publicSiteUrl();
+    if (!site) {
+      setErrorMessage("This app build doesn't have your website's address, so it can't make a Team Schedule link. Add NEXT_PUBLIC_SITE_URL to the app build.");
+      return;
+    }
+    const shareUrl = `${site}/team-schedule?store=${encodeURIComponent(publicStoreSlug)}&week=${linkWeek}`;
 
     try {
       await navigator.clipboard.writeText(shareUrl);
@@ -1788,7 +1794,12 @@ export default function SchedulePage() {
   async function copyPersonLink(employeeId: string) {
     const employee = employees.find((item) => item.id === employeeId);
     const monthParam = (isMonth ? month : firstOfMonth(parseLocalDate(weekStart))).slice(0, 7);
-    const url = `${window.location.origin}/team-schedule?store=${encodeURIComponent(publicStoreSlug)}&view=month&month=${monthParam}&person=${employeeId}`;
+    const site = publicSiteUrl();
+    if (!site) {
+      setErrorMessage("This app build doesn't have your website's address, so it can't make their link. Add NEXT_PUBLIC_SITE_URL to the app build.");
+      return;
+    }
+    const url = `${site}/team-schedule?store=${encodeURIComponent(publicStoreSlug)}&view=month&month=${monthParam}&person=${employeeId}`;
     try {
       await navigator.clipboard.writeText(url);
       setMessage(
@@ -1806,7 +1817,7 @@ export default function SchedulePage() {
         data: buildSheetData(),
         fileName: isMonth ? `schedule-${month.slice(0, 7)}.xlsx` : `schedule-week-${weekStart}.xlsx`,
       });
-      setMessage("Excel file downloaded. The Schedule sheet is laid out like this page; the Summary sheet has each person's totals. It includes any changes you haven't saved yet.");
+      setMessage(`${isNativeApp() ? "Excel file ready to share or save." : "Excel file downloaded."} The Schedule sheet is laid out like this page; the Summary sheet has each person's totals. It includes any changes you haven't saved yet.`);
     } catch (error) {
       setErrorMessage(`Couldn't create the Excel file: ${error instanceof Error ? error.message : "unknown error"}`);
     }
