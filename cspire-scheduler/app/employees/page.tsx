@@ -1,7 +1,9 @@
 "use client";
 
+import Link from "next/link";
 import { FormEvent, useEffect, useState } from "react";
 import { supabase } from "../../src/lib/supabase";
+import { DEFAULT_POSITIONS, loadPositions, positionOptions, type Position } from "../../src/lib/positions";
 import { downloadCsv } from "../../src/lib/csv";
 
 type Employee = {
@@ -51,9 +53,11 @@ export default function EmployeesPage() {
   const [form, setForm] = useState<EmployeeForm>(emptyForm);
   const [message, setMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
+  const [positions, setPositions] = useState<Position[]>(DEFAULT_POSITIONS);
 
   useEffect(() => {
     void loadEmployees();
+    void loadPositions().then((result) => setPositions(result.positions));
   }, []);
 
   async function loadEmployees() {
@@ -77,7 +81,8 @@ export default function EmployeesPage() {
 
   function openAddForm() {
     setEditingEmployee(null);
-    setForm(emptyForm);
+    // New people start with the first non-manager position in the list.
+    setForm({ ...emptyForm, position: positions.filter((position) => !position.isManager).at(0)?.name ?? positions[0]?.name ?? "" });
     setMessage("");
     setErrorMessage("");
     setShowForm(true);
@@ -194,6 +199,9 @@ export default function EmployeesPage() {
           ])} className="rounded-lg border border-slate-300 bg-white px-4 py-2 font-medium hover:bg-slate-50">
             Export CSV
           </button>
+          <Link href="/positions" className="rounded-lg border border-slate-300 bg-white px-4 py-2 font-medium hover:bg-slate-50">
+            Positions
+          </Link>
         {!showForm && (
           <button
             type="button"
@@ -342,15 +350,13 @@ export default function EmployeesPage() {
                 }
                 className="w-full rounded-lg border border-slate-300 px-3 py-2"
               >
-                <option value="Market Manager">Market Manager</option>
-                <option value="Store Manager">Store Manager</option>
-                <option value="Assistant Manager">Assistant Manager</option>
-                <option value="Team Leader">Team Leader</option>
-                <option value="Repair Tech">Repair Tech</option>
-                <option value="ASR II">ASR II</option>
-                <option value="ASR I">ASR I</option>
-                <option value="Part Time">Part Time</option>
+                {positionOptions(positions, form.position).map((name) => (
+                  <option key={name} value={name}>{name}</option>
+                ))}
               </select>
+              <Link href="/positions" className="text-xs font-medium text-blue-700 hover:underline">
+                Add or edit positions
+              </Link>
             </label>
 
             <label className="space-y-1">
