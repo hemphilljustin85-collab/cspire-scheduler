@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../../src/lib/supabase";
 import { fallbackShift } from "../../src/lib/shifts";
 import { TIME_OFF_TYPES, timeOffType } from "../../src/lib/timeOff";
+import { EMPLOYEE_ORDER_RULE, parseEmployeeOrder, sortByEmployeeOrder } from "../../src/lib/employeeOrder";
 
 type Employee = {
   id: string;
@@ -125,6 +126,7 @@ export default function ReportsPage() {
       metricResult,
       ptoResult,
       ruleResult,
+      orderResult,
     ] = await Promise.all([
       supabase
         .from("employees")
@@ -150,6 +152,13 @@ export default function ReportsPage() {
       supabase
         .from("ai_rules")
         .select("id", { count: "exact", head: true }),
+      // The order people are listed in on the Schedule page (drag and drop).
+      supabase
+        .from("ai_rules")
+        .select("rule_value")
+        .eq("rule_type", EMPLOYEE_ORDER_RULE)
+        .is("employee_id", null)
+        .limit(1),
     ]);
 
     const firstError =
@@ -165,7 +174,10 @@ export default function ReportsPage() {
       return;
     }
 
-    const employeeData = (employeeResult.data as Employee[]) || [];
+    const employeeData = sortByEmployeeOrder(
+      (employeeResult.data as Employee[]) || [],
+      parseEmployeeOrder((orderResult.data as Array<{ rule_value: string }> | null)?.[0]?.rule_value),
+    );
     setEmployees(employeeData);
     setMetrics((metricResult.data as Metric[]) || []);
     setPtoRecords((ptoResult.data as PTORecord[]) || []);

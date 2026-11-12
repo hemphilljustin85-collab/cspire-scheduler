@@ -1,7 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { supabase } from "../../src/lib/supabase";
 import { getCurrentStore } from "../../src/lib/store";
 import {
@@ -21,6 +38,39 @@ import {
 import { holidayShiftFor, ruleToHoliday, type Holiday } from "../../src/lib/holidays";
 import { timeOffCode } from "../../src/lib/timeOff";
 import { CHECK_CATEGORIES, checkSchedule, type CheckIssue } from "../../src/lib/scheduleCheck";
+import { EMPLOYEE_ORDER_RULE, parseEmployeeOrder, sortByEmployeeOrder } from "../../src/lib/employeeOrder";
+
+/** A schedule row that can be dragged by its handle (mouse, touch or keyboard). */
+function SortableRow({ id, children }: { id: string; children: (handle: ReactNode) => ReactNode }) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id });
+  const handle = (
+    <button
+      ref={setActivatorNodeRef}
+      type="button"
+      aria-label="Drag to reorder"
+      title="Drag to reorder"
+      className="-ml-1 mr-1 cursor-grab touch-none rounded px-1 text-lg leading-none text-slate-400 hover:bg-slate-100 hover:text-slate-700 active:cursor-grabbing"
+      {...attributes}
+      {...listeners}
+    >
+      ⋮⋮
+    </button>
+  );
+  return (
+    <tr
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Translate.toString(transform ? { ...transform, x: 0 } : null),
+        transition,
+        position: "relative",
+        zIndex: isDragging ? 30 : undefined,
+      }}
+      className={`border-b border-slate-200 ${isDragging ? "bg-blue-50 shadow-lg" : ""}`}
+    >
+      {children(handle)}
+    </tr>
+  );
+}
 
 type Employee = {
   id: string;
@@ -263,6 +313,10 @@ export default function SchedulePage() {
   const [versions, setVersions] = useState<ScheduleVersion[]>([]);
   const [showHistory, setShowHistory] = useState(false);
 
+  // Display order of people (drag and drop); saved as one ai_rules row.
+  const [rowOrder, setRowOrder] = useState<string[]>([]);
+  const [rowOrderRuleId, setRowOrderRuleId] = useState<string | null>(null);
+
   const isMonth = viewMode === "month";
 
   // The weeks on screen: one in Week view, every week touching the month in Month view.
@@ -366,7 +420,7 @@ export default function SchedulePage() {
   }
 
   useEffect(() => {
-    void Promise.all([loadEmployees(), loadRules(), loadCustomShifts()]);
+    void Promise.all([loadEmployees(), loadRules(), loadCustomShifts(), loadRowOrder()]);
   }, []);
 
   async function loadCustomShifts() {
@@ -419,6 +473,43 @@ export default function SchedulePage() {
     setLoading(false);
   }
 
+
+  async function loadRowOrder() {
+    const { data, error } = await supabase
+      .from("ai_rules")
+      .select("id, rule_value")
+      .eq("rule_type", EMPLOYEE_ORDER_RULE)
+      .is("employee_id", null)
+      .limit(1);
+    if (error) {
+      console.error("Unable to load the schedule order:", error);
+      return;
+    }
+    const row = (data as Array<{ id: string; rule_value: string }> | null)?.[0];
+    setRowOrderRuleId(row?.id ?? null);
+    setRowOrder(parseEmployeeOrder(row?.rule_value));
+  }
+
+  async function saveRowOrder(order: string[]) {
+    const previousOrder = rowOrder;
+    setRowOrder(order);
+    const value = JSON.stringify(order);
+    const result = rowOrderRuleId
+      ? await supabase.from("ai_rules").update({ rule_value: value }).eq("id", rowOrderRuleId).select("id")
+      : await supabase
+          .from("ai_rules")
+          .insert({ employee_id: null, rule_type: EMPLOYEE_ORDER_RULE, rule_value: value, start_date: null, end_date: null })
+          .select("id");
+    if (result.error || !result.data || result.data.length === 0) {
+      setRowOrder(previousOrder);
+      setErrorMessage(
+        result.error?.message ||
+          "The new order couldn't be saved. Your account may not have permission to change rules.",
+      );
+      return;
+    }
+    setRowOrderRuleId((result.data as Array<{ id: string }>)[0].id);
+  }
 
   async function loadRules() {
     const { data, error } = await supabase
@@ -1488,6 +1579,36 @@ export default function SchedulePage() {
     setErrorMessage("");
   }
 
+  // People in the order chosen by drag and drop (new people go at the end).
+  // Auto Generate keeps using the alphabetical list, so reordering doesn't change the schedule.
+  const orderedEmployees = useMemo(() => sortByEmployeeOrder(employees, rowOrder), [employees, rowOrder]);
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  function handleRowDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const ids = orderedEmployees.map((employee) => employee.id);
+    const from = ids.indexOf(String(active.id));
+    const to = ids.indexOf(String(over.id));
+    if (from < 0 || to < 0) return;
+    void saveRowOrder(arrayMove(ids, from, to));
+  }
+
+  async function resetRowOrder() {
+    if (!rowOrderRuleId) return;
+    const { data, error } = await supabase.from("ai_rules").delete().eq("id", rowOrderRuleId).select("id");
+    if (error || !data || data.length === 0) {
+      setErrorMessage(error?.message || "The order couldn't be reset. Your account may not have permission to change rules.");
+      return;
+    }
+    setRowOrderRuleId(null);
+    setRowOrder([]);
+    setMessage("Order reset to A–Z.");
+  }
+
   /** Run the schedule check on a grid (the one on screen, or a freshly generated one). */
   function runCheck(gridToCheck: ScheduleGrid): CheckIssue[] {
     return checkSchedule({
@@ -1915,7 +2036,16 @@ export default function SchedulePage() {
           </Link>
         </div>
       ) : (
-        weekStarts.map((weekOf, weekIndex) => {
+        <>
+        <div className="-mb-3 flex flex-wrap items-center justify-between gap-2 text-sm text-slate-500">
+          <span>Drag ⋮⋮ next to a name to change the order people are listed in.</span>
+          {rowOrderRuleId && (
+            <button type="button" onClick={() => void resetRowOrder()} className="font-medium text-blue-700 hover:underline">
+              Reset to A–Z
+            </button>
+          )}
+        </div>
+        {weekStarts.map((weekOf, weekIndex) => {
           const weekDays = days.filter((day) => day.weekIndex === weekIndex);
           const weekStatus = weekRecords[weekOf]?.status;
 
@@ -1986,16 +2116,30 @@ export default function SchedulePage() {
                     </tr>
                   </thead>
 
+                  <DndContext
+                    id={`rows-${weekOf}`}
+                    sensors={sensors}
+                    collisionDetection={closestCenter}
+                    onDragEnd={handleRowDragEnd}
+                  >
+                  <SortableContext items={orderedEmployees.map((employee) => employee.id)} strategy={verticalListSortingStrategy}>
                   <tbody>
-                    {employees.map((employee) => {
+                    {orderedEmployees.map((employee) => {
                       const weekHours = hoursByWeek[employee.id]?.[weekIndex] ?? 0;
 
                       return (
-                        <tr key={employee.id} className="border-b border-slate-200">
+                        <SortableRow key={employee.id} id={employee.id}>
+                          {(handle) => (
+                          <>
                           <td id={`emp-${employee.id}-${weekIndex}`} className={`sticky left-0 z-10 bg-white p-3 ${flashTarget === `emp-${employee.id}-${weekIndex}` ? "animate-pulse bg-amber-100" : ""}`}>
-                            <div className="font-semibold">{employee.employee_name}</div>
-                            <div className="text-xs text-slate-500">
-                              {employee.position || "No position"}
+                            <div className="flex items-start">
+                              {handle}
+                              <div>
+                                <div className="font-semibold">{employee.employee_name}</div>
+                                <div className="text-xs text-slate-500">
+                                  {employee.position || "No position"}
+                                </div>
+                              </div>
                             </div>
                           </td>
 
@@ -2057,10 +2201,14 @@ export default function SchedulePage() {
                               {weekHours.toFixed(2)}
                             </span>
                           </td>
-                        </tr>
+                          </>
+                          )}
+                        </SortableRow>
                       );
                     })}
                   </tbody>
+                  </SortableContext>
+                  </DndContext>
 
                   <tfoot>
                     <tr className="bg-slate-100 font-semibold">
@@ -2079,7 +2227,8 @@ export default function SchedulePage() {
               </div>
             </section>
           );
-        })
+        })}
+        </>
       )}
 
       <div className="rounded-xl bg-white p-5 shadow">
