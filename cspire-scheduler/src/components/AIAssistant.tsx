@@ -3,6 +3,7 @@
 import { FormEvent, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { supabase } from "../lib/supabase";
+import { isNativeApp, publicSiteUrl } from "../lib/native";
 
 type ProposedAction = {
   type: string;
@@ -56,7 +57,13 @@ export default function AIAssistant() {
       throw new Error("Your manager session expired. Please sign in again.");
     }
 
-    const response = await fetch("/api/ai-assistant", {
+    // The assistant runs on the website's server (it keeps the AI key secret);
+    // the iPhone app calls it there.
+    const base = isNativeApp() ? publicSiteUrl() : "";
+    if (isNativeApp() && !base) {
+      throw new Error("The AI assistant needs your website's address in the app build (NEXT_PUBLIC_SITE_URL).");
+    }
+    const response = await fetch(`${base}/api/ai-assistant`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

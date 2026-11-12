@@ -9,6 +9,7 @@
 
 import { useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { isNativeApp, printPage } from "../lib/native";
 
 export type PrintCell = {
   /** Full label, e.g. "8:30–5:30" or "Off". */
@@ -74,6 +75,13 @@ export function usePrintSheet(): [ReactNode, (sheet: ReactNode, orientation?: "l
     // Once the sheet has rendered, measure it at the page's printable size and
     // scale it down if needed so it always fits on one page, then print.
     const timer = window.setTimeout(() => {
+      if (isNativeApp()) {
+        // The iPhone print dialog prints portrait; fit to that, and the
+        // "afterprint" event doesn't fire there, so finish when it closes.
+        fitSheetToPage("portrait");
+        void printPage("Schedule").finally(done);
+        return;
+      }
       fitSheetToPage(job.orientation);
       window.print();
     }, 150);

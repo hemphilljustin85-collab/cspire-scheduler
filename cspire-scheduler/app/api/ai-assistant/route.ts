@@ -589,6 +589,12 @@ async function executeAction(
   }
 }
 
+// The iPhone app calls this from the phone; answer the browser's CORS check.
+// (The CORS headers themselves are added in next.config.ts.)
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 204 });
+}
+
 export async function POST(request: NextRequest) {
   try {
     const authentication = await verifyUser(request);

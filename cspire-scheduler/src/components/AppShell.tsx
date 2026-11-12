@@ -139,7 +139,7 @@ export default function AppShell({
         <Sidebar />
       </div>
 
-      <header className="sticky top-0 z-40 flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3 shadow-sm lg:hidden">
+      <header className="safe-sticky-top sticky top-0 z-40 flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3 shadow-sm lg:hidden">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-blue-600">
             {storeName} · Manager Portal
@@ -169,7 +169,7 @@ export default function AppShell({
             className="absolute inset-0 bg-slate-950/60"
           />
 
-          <div className="relative h-full w-[86%] max-w-sm shadow-2xl">
+          <div className="safe-pad-top-only relative h-full w-[86%] max-w-sm bg-slate-900 shadow-2xl">
             <Sidebar
               mobile
               onNavigate={() => setMobileMenuOpen(false)}
@@ -179,7 +179,7 @@ export default function AppShell({
         </div>
       )}
 
-      <main className="min-w-0 p-3 sm:p-5 lg:ml-64 lg:p-8">
+      <main className="safe-pad-bottom min-w-0 p-3 sm:p-5 lg:ml-64 lg:p-8">
         {children}
       </main>
 

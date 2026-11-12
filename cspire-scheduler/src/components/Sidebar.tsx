@@ -62,7 +62,7 @@ export default function Sidebar({
       className={
         mobile
           ? "flex h-full w-full flex-col overflow-y-auto bg-slate-900 p-5 text-white"
-          : "fixed inset-y-0 left-0 z-30 flex w-64 flex-col overflow-y-auto bg-slate-900 p-6 text-white"
+          : "safe-pad-top fixed inset-y-0 left-0 z-30 flex w-64 flex-col overflow-y-auto bg-slate-900 p-6 text-white"
       }
     >
       <div className="flex items-start justify-between gap-4">
