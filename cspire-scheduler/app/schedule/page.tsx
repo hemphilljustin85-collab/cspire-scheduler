@@ -39,6 +39,8 @@ import { holidayShiftFor, ruleToHoliday, type Holiday } from "../../src/lib/holi
 import { timeOffCode } from "../../src/lib/timeOff";
 import { CHECK_CATEGORIES, checkSchedule, type CheckIssue } from "../../src/lib/scheduleCheck";
 import { EMPLOYEE_ORDER_RULE, parseEmployeeOrder, sortByEmployeeOrder } from "../../src/lib/employeeOrder";
+import { closingPrefsFor } from "../../src/lib/closingPrefs";
+import { findFix, type FixResult } from "../../src/lib/scheduleFix";
 
 /** A schedule row that can be dragged by its handle (mouse, touch or keyboard). */
 function SortableRow({ id, children }: { id: string; children: (handle: ReactNode) => ReactNode }) {
@@ -1118,12 +1120,39 @@ export default function SchedulePage() {
         // first, people who have reached it last; then whoever has opened or
         // closed this weekday the fewest times (this month and last), then the
         // fewest overall. Ties keep the rotation order.
+        // Closing preferences: avoid someone's "prefer not to close" days, and
+        // keep closes back-to-back (or spread apart) for people who asked.
+        const closedYesterday = (employee: Employee) =>
+          dayIndex > 0 && isCloser(generated[employee.id][String(day.offset - 1)] ?? "OFF");
+        const closedEarlierThisWeek = (employee: Employee) =>
+          weekDays.some((other) => other.weekday < dayIndex - 1 && isCloser(generated[employee.id][String(other.offset)] ?? "OFF"));
+        // A fair share of closes per person per week, so "back-to-back" never
+        // turns into closing every night.
+        const weeklyCloseShare = Math.max(1, Math.ceil((rules.closersPerDay * WORK_DAYS.length) / Math.max(employeeCount, 1)));
+        const closesThisWeek = (employee: Employee) =>
+          weekDays.filter((other) => other.weekday < dayIndex && isCloser(generated[employee.id][String(other.offset)] ?? "OFF")).length;
+        const preferenceScore = (employee: Employee) => {
+          const prefs = closingPrefsFor(savedRules, employee.id, weekOf);
+          let score = prefs.avoidDays.has(dayIndex) ? 2 : 0;
+          if (prefs.pattern === "together") {
+            // Continue a run of closes up to their share; don't start a second, separate run this week.
+            if (closesThisWeek(employee) >= weeklyCloseShare) score += 1;
+            else if (closedYesterday(employee)) score -= 1;
+            else if (closedEarlierThisWeek(employee)) score += 1;
+          }
+          if (prefs.pattern === "apart" && closedYesterday(employee)) score += 1;
+          return score;
+        };
+        // Keep someone who wants back-to-back closes free to close again tonight.
+        const keepForClosing = (employee: Employee) => Number(preferenceScore(employee) < 0);
+
         const wd = dayIndex;
         const openersToday = [...rotated]
           .sort(
             (a, b) =>
               targetPriority("open", a, day) - targetPriority("open", b, day) ||
               Number(targetPriority("close", a, day) === 0) - Number(targetPriority("close", b, day) === 0) ||
+              keepForClosing(a) - keepForClosing(b) ||
               opensOn[a.id][wd] - opensOn[b.id][wd] ||
               opens[a.id] - opens[b.id],
           )
@@ -1133,6 +1162,7 @@ export default function SchedulePage() {
           .sort(
             (a, b) =>
               targetPriority("close", a, day) - targetPriority("close", b, day) ||
+              preferenceScore(a) - preferenceScore(b) ||
               closesOn[a.id][wd] - closesOn[b.id][wd] ||
               closes[a.id] - closes[b.id],
           )
@@ -1213,7 +1243,9 @@ export default function SchedulePage() {
               const codesToday = employees.map((other) => generated[other.id][String(day.offset)] ?? "OFF");
               // (Skipped for someone who has already reached their monthly amount.)
               const fillShift =
-                codesToday.filter(isCloser).length < rules.closersPerDay && targetPriority("close", employee, day) !== 2
+                codesToday.filter(isCloser).length < rules.closersPerDay &&
+                targetPriority("close", employee, day) !== 2 &&
+                !closingPrefsFor(savedRules, employee.id, weekOf).avoidDays.has(day.weekday)
                   ? chooseClosingShift(day.weekday)
                   : codesToday.filter(isOpener).length < rules.openersPerDay && targetPriority("open", employee, day) !== 2
                     ? chooseOpeningShift(day.weekday, codesToday.filter(isOpener).length)
@@ -1631,6 +1663,79 @@ export default function SchedulePage() {
     });
   }
 
+  const [fixingId, setFixingId] = useState<string | null>(null);
+  // The grid before the last Fix, so it can be undone.
+  const [undoGrid, setUndoGrid] = useState<ScheduleGrid | null>(null);
+
+  function shiftLabel(code: string, offset: number) {
+    return code === "OFF" ? "Off" : shiftFor(code, offset).label;
+  }
+
+  function fixIssue(issue: CheckIssue) {
+    setFixingId(issue.id);
+    setErrorMessage("");
+    // Let the button show "Fixing…" before the search runs.
+    window.setTimeout(() => {
+      const result: FixResult | null = findFix(issue, grid, {
+        check: {
+          employees,
+          days,
+          weekStarts,
+          rules,
+          savedRules,
+          isOpener,
+          isCloser,
+          isWorking: isWorkingCode,
+          hoursFor: (code, offset) => shiftFor(code, offset).hours,
+          timesFor: (code, offset) => {
+            const shift = shiftFor(code, offset);
+            return isWorkingCode(code) ? { start: shift.start_time, end: shift.end_time } : { start: null, end: null };
+          },
+          holidayFor: (offset) => weekHolidays.get(offset),
+          month: isMonth ? month : null,
+        },
+        // Approved days off and closed holidays are never changed.
+        isLocked: (employeeId, offset) =>
+          isApprovedPTO(employeeId, offset) || weekHolidays.get(offset)?.mode === "closed",
+        codesForDay: (offset) => {
+          const holiday = weekHolidays.get(offset);
+          if (holiday) return holiday.mode === "short" ? ["HOLIDAY", HOLIDAY_SHORT_CODE] : [];
+          return ["OFF", ...optionsForDay(offset).map((option) => option.code).filter((code) => isWorkingCode(code))];
+        },
+      });
+      setFixingId(null);
+
+      if (!result) {
+        setMessage("");
+        setErrorMessage(
+          "Couldn't find a fix for that without breaking another rule (coverage, days off, availability, shift days). Try changing it by hand, or adjust a rule.",
+        );
+        return;
+      }
+
+      const nameOf = (id: string) => employees.find((employee) => employee.id === id)?.employee_name ?? "Someone";
+      const changes = result.changes
+        .map((change) => {
+          const day = days.find((item) => item.offset === change.offset);
+          return `${nameOf(change.employeeId)} ${day ? dayLabel(day) : ""}: ${shiftLabel(change.from, change.offset)} → ${shiftLabel(change.to, change.offset)}`;
+        })
+        .join("; ");
+      const sideEffects = result.newHeadsUps.length
+        ? ` Note: this adds ${result.newHeadsUps.length} heads-up${result.newHeadsUps.length === 1 ? "" : "s"} (${result.newHeadsUps.map((item) => item.message).join(" ")}).`
+        : "";
+      setUndoGrid(grid);
+      setGrid(result.grid);
+      setMessage(`Fixed: ${changes}.${sideEffects} Not saved yet.`);
+    }, 20);
+  }
+
+  function undoFix() {
+    if (!undoGrid) return;
+    setGrid(undoGrid);
+    setUndoGrid(null);
+    setMessage("Fix undone.");
+  }
+
   // Re-checked on every render, so it always matches what's on screen (the check is quick).
   const issues = loading || employees.length === 0 ? [] : runCheck(grid);
   const problemCount = issues.filter((issue) => issue.severity === "problem").length;
@@ -1809,8 +1914,17 @@ export default function SchedulePage() {
       </div>
 
       {message && (
-        <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-green-800">
-          {message}
+        <div className="flex flex-col gap-2 rounded-lg border border-green-200 bg-green-50 p-3 text-green-800 sm:flex-row sm:items-start sm:justify-between">
+          <span>{message}</span>
+          {undoGrid && message.startsWith("Fixed:") && (
+            <button
+              type="button"
+              onClick={undoFix}
+              className="shrink-0 self-start rounded-lg border border-green-400 bg-white px-3 py-1 text-sm font-semibold hover:bg-green-100"
+            >
+              Undo
+            </button>
+          )}
         </div>
       )}
 
@@ -1983,11 +2097,11 @@ export default function SchedulePage() {
                     </h3>
                     <ul className="mt-2 max-h-56 space-y-1 overflow-y-auto text-sm">
                       {items.map((issue) => (
-                        <li key={issue.id}>
+                        <li key={issue.id} className="flex items-start gap-2">
                           <button
                             type="button"
                             onClick={() => jumpToIssue(issue)}
-                            className="flex w-full items-start gap-2 rounded px-1 py-0.5 text-left hover:bg-slate-100"
+                            className="flex min-w-0 flex-1 items-start gap-2 rounded px-1 py-0.5 text-left hover:bg-slate-100"
                           >
                             <span
                               className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${issue.severity === "problem" ? "bg-red-500" : "bg-amber-500"}`}
@@ -1995,6 +2109,17 @@ export default function SchedulePage() {
                             />
                             <span>{issue.message}</span>
                           </button>
+                          {issue.scopeDays.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => fixIssue(issue)}
+                              disabled={fixingId !== null}
+                              className="shrink-0 rounded-md border border-blue-300 px-2 py-0.5 text-xs font-semibold text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+                              title="Find the smallest change that fixes this without breaking another rule"
+                            >
+                              {fixingId === issue.id ? "Fixing…" : "Fix"}
+                            </button>
+                          )}
                         </li>
                       ))}
                     </ul>
