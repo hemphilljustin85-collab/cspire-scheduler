@@ -4,6 +4,44 @@ import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { supabase } from "../../src/lib/supabase";
 import { loadPositions, savePositions, type Position } from "../../src/lib/positions";
+import {
+  POSITION_REQUIREMENT_RULE,
+  describeRequirement,
+  positionsIn,
+  renamePosition,
+  requirementsFromRules,
+  type PositionRequirement,
+  type RequirementRole,
+  type SavedRequirement,
+} from "../../src/lib/positionRequirements";
+
+const WEEKDAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+type RequirementDraft = {
+  kind: "minimum" | "pairing";
+  role: RequirementRole;
+  position: string;
+  positions: string[];
+  min: number;
+  days: number[];
+};
+
+const emptyDraft: RequirementDraft = { kind: "pairing", role: "open", position: "", positions: [], min: 1, days: [] };
+
+function draftFrom(requirement: PositionRequirement): RequirementDraft {
+  return requirement.kind === "minimum"
+    ? { kind: "minimum", role: requirement.role, position: "", positions: requirement.positions, min: requirement.min, days: requirement.days }
+    : { kind: "pairing", role: requirement.role, position: requirement.position, positions: requirement.requires, min: 1, days: requirement.days };
+}
+
+function requirementFrom(draft: RequirementDraft): PositionRequirement | string {
+  if (draft.positions.length === 0) return "Pick at least one position.";
+  if (draft.kind === "pairing") {
+    if (!draft.position) return "Pick the position that needs someone with it.";
+    return { kind: "pairing", role: draft.role, position: draft.position, requires: draft.positions, days: draft.days };
+  }
+  return { kind: "minimum", role: draft.role, positions: draft.positions, min: Math.max(1, Math.floor(draft.min) || 1), days: draft.days };
+}
 
 type EmployeePosition = { id: string; position: string | null; status: string | null };
 
@@ -21,6 +59,9 @@ export default function PositionsPage() {
   const [newIsManager, setNewIsManager] = useState(false);
   const [renaming, setRenaming] = useState<{ index: number; value: string } | null>(null);
   const [removing, setRemoving] = useState<{ index: number; moveTo: string } | null>(null);
+  const [requirements, setRequirements] = useState<SavedRequirement[]>([]);
+  const [draft, setDraft] = useState<RequirementDraft>(emptyDraft);
+  const [editingRequirementId, setEditingRequirementId] = useState<string | null>(null);
 
   useEffect(() => {
     void load();
@@ -28,10 +69,17 @@ export default function PositionsPage() {
 
   async function load() {
     setLoading(true);
-    const [positionResult, employeeResult] = await Promise.all([
+    const [positionResult, employeeResult, requirementResult] = await Promise.all([
       loadPositions(),
       supabase.from("employees").select("id, position, status"),
+      supabase
+        .from("ai_rules")
+        .select("id, rule_type, rule_value, employee_id")
+        .eq("rule_type", POSITION_REQUIREMENT_RULE)
+        .is("employee_id", null),
     ]);
+    if (requirementResult.error) setErrorMessage(requirementResult.error.message);
+    setRequirements(requirementsFromRules((requirementResult.data as Array<{ id: string; rule_type: string; rule_value: string; employee_id: string | null }>) || []));
     if (positionResult.error) setErrorMessage(positionResult.error);
     if (employeeResult.error) setErrorMessage(employeeResult.error.message);
     setPositions(positionResult.positions);
@@ -120,6 +168,15 @@ export default function PositionsPage() {
     const people = countFor(old.name);
     setBusy(true);
     const moved = await moveEmployees(old.name, name);
+    // Keep opening/closing requirements pointing at the renamed position.
+    for (const item of requirements) {
+      if (!item.id || !positionsIn(item.requirement).some((other) => same(other, old.name))) continue;
+      await supabase
+        .from("ai_rules")
+        .update({ rule_value: JSON.stringify(renamePosition(item.requirement, old.name, name)) })
+        .eq("id", item.id);
+    }
+    setRequirements((current) => current.map((item) => ({ ...item, requirement: renamePosition(item.requirement, old.name, name) })));
     setBusy(false);
     if (!moved) return;
     const next = positions.map((position, other) => (other === index ? { ...position, name } : position));
@@ -148,6 +205,13 @@ export default function PositionsPage() {
 
   async function remove(index: number, moveTo: string) {
     const old = positions[index];
+    const usedIn = requirements.filter((item) => positionsIn(item.requirement).some((other) => same(other, old.name))).length;
+    if (usedIn > 0) {
+      setMessage("");
+      setErrorMessage(`${old.name} is used in ${usedIn} opening/closing requirement${usedIn === 1 ? "" : "s"} below. Change or remove ${usedIn === 1 ? "it" : "them"} first.`);
+      setRemoving(null);
+      return;
+    }
     const people = countFor(old.name);
     if (people > 0) {
       if (!moveTo) {
@@ -164,6 +228,59 @@ export default function PositionsPage() {
       setRemoving(null);
     }
   }
+
+  async function saveRequirement(event: FormEvent) {
+    event.preventDefault();
+    const requirement = requirementFrom(draft);
+    if (typeof requirement === "string") {
+      setMessage("");
+      setErrorMessage(requirement);
+      return;
+    }
+    setBusy(true);
+    const value = JSON.stringify(requirement);
+    const result = editingRequirementId
+      ? await supabase.from("ai_rules").update({ rule_value: value }).eq("id", editingRequirementId).select("id")
+      : await supabase
+          .from("ai_rules")
+          .insert({ employee_id: null, rule_type: POSITION_REQUIREMENT_RULE, rule_value: value, start_date: null, end_date: null })
+          .select("id");
+    setBusy(false);
+    if (result.error || !result.data || result.data.length === 0) {
+      setMessage("");
+      setErrorMessage(result.error?.message || "The requirement couldn't be saved. Your account may not have permission to change rules.");
+      return;
+    }
+    const id = (result.data as Array<{ id: string }>)[0].id;
+    setRequirements((current) =>
+      editingRequirementId
+        ? current.map((item) => (item.id === editingRequirementId ? { id, requirement } : item))
+        : [...current, { id, requirement }],
+    );
+    notice(`${editingRequirementId ? "Updated" : "Added"}: ${describeRequirement(requirement)} Auto Generate follows it from now on.`);
+    setDraft(emptyDraft);
+    setEditingRequirementId(null);
+  }
+
+  async function removeRequirement(item: SavedRequirement) {
+    if (!item.id) return;
+    setBusy(true);
+    const { data, error } = await supabase.from("ai_rules").delete().eq("id", item.id).select("id");
+    setBusy(false);
+    if (error || !data || data.length === 0) {
+      setMessage("");
+      setErrorMessage(error?.message || "The requirement couldn't be removed. Your account may not have permission to change rules.");
+      return;
+    }
+    setRequirements((current) => current.filter((other) => other.id !== item.id));
+    if (editingRequirementId === item.id) {
+      setEditingRequirementId(null);
+      setDraft(emptyDraft);
+    }
+    notice("Requirement removed.");
+  }
+
+  const draftPreview = requirementFrom(draft);
 
   return (
     <div className="space-y-6">
@@ -295,6 +412,181 @@ export default function PositionsPage() {
             })}
           </ul>
         )}
+      </div>
+
+      <div className="rounded-xl bg-white shadow">
+        <div className="border-b p-5">
+          <h2 className="text-xl font-bold">Opening &amp; closing requirements</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            Who can open or close, by position. Auto Generate follows these, the schedule check flags any
+            day that doesn&apos;t meet one, and Fix can repair it.
+          </p>
+        </div>
+
+        {requirements.length > 0 && (
+          <ul className="divide-y">
+            {requirements.map((item) => (
+              <li key={item.id} className="flex flex-col gap-2 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <span className="font-medium">{describeRequirement(item.requirement)}</span>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => {
+                      setEditingRequirementId(item.id ?? null);
+                      setDraft(draftFrom(item.requirement));
+                    }}
+                    className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium hover:bg-slate-50"
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void removeRequirement(item)}
+                    className="rounded-lg border border-red-200 px-3 py-1.5 text-sm text-red-700 hover:bg-red-50"
+                  >
+                    Remove
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <form onSubmit={saveRequirement} className="space-y-4 border-t bg-slate-50 p-5">
+          <h3 className="font-semibold">{editingRequirementId ? "Edit requirement" : "Add a requirement"}</h3>
+          <div className="flex flex-wrap gap-2">
+            {([
+              ["pairing", "A position can't open/close without another"],
+              ["minimum", "At least some of a position must open/close"],
+            ] as const).map(([kind, label]) => (
+              <button
+                key={kind}
+                type="button"
+                onClick={() => setDraft({ ...draft, kind })}
+                className={`rounded-lg border px-3 py-2 text-sm font-semibold ${draft.kind === kind ? "border-blue-600 bg-blue-50 text-blue-800" : "border-slate-300 bg-white"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            {draft.kind === "pairing" ? (
+              <>
+                <select
+                  value={draft.position}
+                  onChange={(event) => setDraft({ ...draft, position: event.target.value })}
+                  className="rounded-lg border border-slate-300 bg-white px-2 py-2"
+                  aria-label="Position"
+                >
+                  <option value="">Choose a position…</option>
+                  {positions.map((position) => <option key={position.name} value={position.name}>{position.name}</option>)}
+                </select>
+                <span>can&apos;t</span>
+              </>
+            ) : (
+              <>
+                <span>At least</span>
+                <input
+                  type="number"
+                  min={1}
+                  max={10}
+                  value={draft.min}
+                  onChange={(event) => setDraft({ ...draft, min: Number(event.target.value) })}
+                  className="w-16 rounded-lg border border-slate-300 bg-white px-2 py-2"
+                  aria-label="How many"
+                />
+                <span>of the positions below must</span>
+              </>
+            )}
+            <select
+              value={draft.role}
+              onChange={(event) => setDraft({ ...draft, role: event.target.value as RequirementRole })}
+              className="rounded-lg border border-slate-300 bg-white px-2 py-2"
+              aria-label="Open or close"
+            >
+              <option value="open">open</option>
+              <option value="close">close</option>
+            </select>
+            {draft.kind === "pairing" && <span>unless one of these also {draft.role === "open" ? "opens" : "closes"}:</span>}
+          </div>
+
+          <div className="flex flex-wrap gap-2">
+            {positions.map((position) => {
+              const on = draft.positions.includes(position.name);
+              return (
+                <button
+                  key={position.name}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() =>
+                    setDraft({
+                      ...draft,
+                      positions: on ? draft.positions.filter((name) => name !== position.name) : [...draft.positions, position.name],
+                    })
+                  }
+                  className={`rounded-full border px-3 py-1 text-sm font-medium ${on ? "border-blue-600 bg-blue-600 text-white" : "border-slate-300 bg-white"}`}
+                >
+                  {position.name}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="font-medium">Days:</span>
+            <button
+              type="button"
+              onClick={() => setDraft({ ...draft, days: [] })}
+              className={`rounded-md border px-2.5 py-1 font-semibold ${draft.days.length === 0 ? "border-blue-600 bg-blue-50 text-blue-800" : "border-slate-300 bg-white"}`}
+            >
+              Every day
+            </button>
+            {WEEKDAY_SHORT.map((name, day) => {
+              const on = draft.days.includes(day);
+              return (
+                <button
+                  key={name}
+                  type="button"
+                  aria-pressed={on}
+                  onClick={() => setDraft({ ...draft, days: on ? draft.days.filter((item) => item !== day) : [...draft.days, day].sort() })}
+                  className={`rounded-md border px-2.5 py-1 font-semibold ${on ? "border-blue-600 bg-blue-50 text-blue-800" : "border-slate-300 bg-white"}`}
+                >
+                  {name}
+                </button>
+              );
+            })}
+          </div>
+
+          <p className="rounded-lg bg-white p-3 text-sm">
+            <span className="font-semibold">Rule: </span>
+            {typeof draftPreview === "string" ? <span className="text-slate-500">{draftPreview}</span> : describeRequirement(draftPreview)}
+          </p>
+
+          <div className="flex gap-2">
+            <button
+              type="submit"
+              disabled={busy || typeof draftPreview === "string"}
+              className="rounded-lg bg-blue-600 px-4 py-2 font-semibold text-white disabled:opacity-50"
+            >
+              {editingRequirementId ? "Save requirement" : "Add requirement"}
+            </button>
+            {editingRequirementId && (
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingRequirementId(null);
+                  setDraft(emptyDraft);
+                }}
+                className="rounded-lg border bg-white px-4 py-2"
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        </form>
       </div>
 
       {unlisted.length > 0 && (

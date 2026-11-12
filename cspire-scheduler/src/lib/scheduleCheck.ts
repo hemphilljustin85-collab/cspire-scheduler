@@ -1,4 +1,5 @@
 import { closingPrefsFor } from "./closingPrefs";
+import { appliesOn, meets, requirementsFromRules, unmetMessage } from "./positionRequirements";
 
 // Live schedule check: looks over the schedule on screen (after Auto Generate
 // or any manual change) and lists anything that needs a manager's attention.
@@ -38,7 +39,7 @@ type RuleLike = {
 };
 
 export type CheckInput = {
-  employees: Array<{ id: string; employee_name: string }>;
+  employees: Array<{ id: string; employee_name: string; position?: string | null }>;
   days: CheckDay[];
   weekStarts: string[];
   grid: Record<string, Record<string, string>>;
@@ -64,7 +65,7 @@ export type CheckInput = {
 const WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 /** Order categories are shown in. */
-export const CHECK_CATEGORIES = ["Not started", "Coverage", "Rules", "Days off", "Saturdays off", "Hours", "Short rest", "Preferences", "Fairness", "Monthly amounts"];
+export const CHECK_CATEGORIES = ["Not started", "Coverage", "Position rules", "Rules", "Days off", "Saturdays off", "Hours", "Short rest", "Preferences", "Fairness", "Monthly amounts"];
 
 /** Someone this far from what most people got this month is flagged. */
 export const FAIRNESS_GAP = 2;
@@ -179,6 +180,32 @@ export function checkSchedule(input: CheckInput): CheckIssue[] {
     }
     if (closers < rules.closersPerDay) {
       add({ severity: "problem", category: "Coverage", key: `Coverage:closer:${day.offset}`, scopeDays: [day.offset], offset: day.offset, message: `${dayLabel(day)}: ${closers} closer${closers === 1 ? "" : "s"}, needs ${rules.closersPerDay}.` });
+    }
+  }
+
+  // Position rules: who can open/close by position (set on the Positions page).
+  const requirements = requirementsFromRules(savedRules as Array<RuleLike & { id?: string }>);
+  if (requirements.length > 0) {
+    for (const day of days) {
+      if (input.holidayFor(day.offset)) continue;
+      const codes = employees.map((employee) => ({ employee, code: codeAt(employee.id, day.offset) }));
+      if (!codes.some(({ code }) => input.isWorking(code))) continue;
+      requirements.forEach((item, index) => {
+        const requirement = item.requirement;
+        if (!appliesOn(requirement, day.weekday)) return;
+        const members = codes
+          .filter(({ code }) => (requirement.role === "open" ? input.isOpener(code) : input.isCloser(code)))
+          .map(({ employee }) => employee.position);
+        if (meets(requirement, members)) return;
+        add({
+          severity: "problem",
+          category: "Position rules",
+          key: `Position rules:${item.id ?? index}:${day.offset}`,
+          scopeDays: [day.offset],
+          offset: day.offset,
+          message: unmetMessage(requirement, dayLabel(day), members),
+        });
+      });
     }
   }
 
