@@ -1,11 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "../../../src/lib/supabase";
+import { DEFAULT_POSITIONS, loadPositions, type Position } from "../../../src/lib/positions";
 
 export default function AddEmployeePage() {
   const [name, setName] = useState("");
   const [position, setPosition] = useState("");
+  const [positions, setPositions] = useState<Position[]>(DEFAULT_POSITIONS);
+
+  useEffect(() => {
+    void loadPositions().then((result) => setPositions(result.positions));
+  }, []);
 
   async function saveEmployee() {
     if (!name || !position) {
@@ -61,17 +67,11 @@ export default function AddEmployeePage() {
             Select Position
           </option>
 
-          <option value="Market Manager">
-            Market Manager
-          </option>
-
-          <option value="ASR II">
-            ASR II
-          </option>
-
-          <option value="Team Leader">
-            Team Leader
-          </option>
+          {positions.map((item) => (
+            <option key={item.name} value={item.name}>
+              {item.name}
+            </option>
+          ))}
         </select>
 
         <button

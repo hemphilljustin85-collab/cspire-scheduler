@@ -9,6 +9,7 @@ import { getCurrentStore } from "../lib/store";
 const links = [
   { name: "Dashboard", href: "/dashboard", icon: "▦" },
   { name: "Employees", href: "/employees", icon: "●" },
+  { name: "Positions", href: "/positions", icon: "◆" },
   { name: "Schedule", href: "/schedule", icon: "▤" },
   { name: "Days Off", href: "/days-off", icon: "◷" },
   { name: "Shifts", href: "/shifts", icon: "+" },

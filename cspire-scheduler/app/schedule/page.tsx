@@ -49,6 +49,7 @@ import {
   type PrintCell,
 } from "../../src/components/PrintSheets";
 import { downloadScheduleExcel } from "../../src/lib/scheduleExcel";
+import { isManagerPosition, parsePositions, POSITIONS_RULE } from "../../src/lib/positions";
 
 /** A schedule row that can be dragged by its handle (mouse, touch or keyboard). */
 function SortableRow({ id, children }: { id: string; children: (handle: ReactNode) => ReactNode }) {
@@ -896,9 +897,9 @@ export default function SchedulePage() {
       Math.max(workingDays - 1, 0),
     );
 
-    const managers = employees.filter((employee) =>
-      (employee.position || "").toLowerCase().includes("manager"),
-    );
+    // Positions marked "Counts as a manager" on the Positions page.
+    const positionList = parsePositions(savedRules.find((rule) => rule.rule_type === POSITIONS_RULE && !rule.employee_id)?.rule_value);
+    const managers = employees.filter((employee) => isManagerPosition(employee.position, positionList));
 
     const saturdayIndex = 5;
     const saturdayOffTarget = Math.min(
