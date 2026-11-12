@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { supabase } from "../../src/lib/supabase";
+import { parseAvoidDays, parseClosingPattern } from "../../src/lib/closingPrefs";
 
 type Rule = {
   id: string;
@@ -54,6 +55,8 @@ const RULE_TYPES = [
   { value: "preferred_day_off", label: "Preferred employee day off" },
   { value: "monthly_close_target", label: "Closes per month on a day" },
   { value: "monthly_open_target", label: "Opens per month on a day" },
+  { value: "avoid_closing_days", label: "Prefers not to close on" },
+  { value: "closing_pattern", label: "Closing shifts: back-to-back or spread out" },
   { value: "custom", label: "Custom rule" },
 ];
 
@@ -75,6 +78,8 @@ function getRulePlaceholder(ruleType: string) {
     case "preferred_shift": return "Example: AM";
     case "monthly_close_target": return "Example: Saturday|2";
     case "monthly_open_target": return "Example: Monday|2";
+    case "avoid_closing_days": return "Example: Thursday";
+    case "closing_pattern": return "Together or Apart";
     default: return "Example: 2, 40, or Monday";
   }
 }
@@ -86,6 +91,8 @@ function getRuleHelp(ruleType: string) {
     case "required_shift": return "Choose an employee, then use DAY|SHIFT with a short code from the Shifts page. Example: Monday|CLOSE.";
     case "preferred_day_off": return "Choose an employee and enter a day such as Saturday.";
     case "monthly_close_target": return "Format: DAY|NUMBER. Example: Saturday|2 means this person should close about 2 Saturdays each month (0 means avoid closing that day). Choose All employees to set it for everyone; a rule for one person overrides it. Auto Generate also counts closes already saved earlier in the month and in the previous month so it stays even.";
+    case "avoid_closing_days": return "Choose an employee and enter one or more days, e.g. Thursday or Thursday,Friday. Auto Generate avoids giving them closing shifts on these days when it can, and the schedule check shows a heads-up when they close on one.";
+    case "closing_pattern": return "Choose an employee and enter Together (they prefer closing shifts back-to-back, like Thu–Fri–Sat) or Apart (they prefer closes spread out, never two nights in a row). Auto Generate follows this when it can, and the schedule check shows a heads-up when it isn't met.";
     case "monthly_open_target": return "Format: DAY|NUMBER. Example: Monday|2 means this person should open about 2 Mondays each month (0 means avoid opening that day). Choose All employees to set it for everyone; a rule for one person overrides it.";
     case "availability": return "Choose an employee and list allowed days separated by commas.";
     case "unavailable": return "Choose an employee and list blocked days separated by commas.";
@@ -189,6 +196,24 @@ export default function RulesPage() {
 
     if (!form.rule_type.trim() || !form.rule_value.trim()) {
       setErrorMessage("Rule type and rule value are required.");
+      return;
+    }
+
+    if (["avoid_closing_days", "closing_pattern"].includes(form.rule_type) && !form.employee_id) {
+      setErrorMessage("Choose the employee this closing preference is for.");
+      return;
+    }
+
+    if (form.rule_type === "avoid_closing_days") {
+      const listed = form.rule_value.split(",").filter((day) => day.trim()).length;
+      if (listed === 0 || parseAvoidDays(form.rule_value).length !== listed) {
+        setErrorMessage("Enter one or more days Monday–Saturday, separated by commas, e.g. Thursday,Friday.");
+        return;
+      }
+    }
+
+    if (form.rule_type === "closing_pattern" && !parseClosingPattern(form.rule_value)) {
+      setErrorMessage("Enter Together (closing shifts back-to-back) or Apart (spread out).");
       return;
     }
 
@@ -363,7 +388,11 @@ export default function RulesPage() {
                                 ? "Saturday|2"
                                 : ruleType === "monthly_open_target"
                                   ? "Monday|2"
-                                  : form.rule_value,
+                                  : ruleType === "avoid_closing_days"
+                                    ? "Thursday"
+                                    : ruleType === "closing_pattern"
+                                      ? "Together"
+                                      : form.rule_value,
                   });
                 }}
                 className="w-full rounded-lg border border-slate-300 px-3 py-2"

@@ -1,3 +1,5 @@
+import { closingPrefsFor } from "./closingPrefs";
+
 // Live schedule check: looks over the schedule on screen (after Auto Generate
 // or any manual change) and lists anything that needs a manager's attention.
 
@@ -15,9 +17,13 @@ export type CheckSeverity = "problem" | "heads-up";
 
 export type CheckIssue = {
   id: string;
+  /** Stable identity (no counts), so a fix can tell whether the issue is gone. */
+  key: string;
   severity: CheckSeverity;
   category: string;
   message: string;
+  /** Days (grid offsets) a Fix may change; no Fix is offered when empty. */
+  scopeDays: number[];
   employeeId?: string;
   /** Day the issue is about (grid offset). */
   offset?: number;
@@ -58,7 +64,7 @@ export type CheckInput = {
 const WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
 /** Order categories are shown in. */
-export const CHECK_CATEGORIES = ["Not started", "Coverage", "Rules", "Days off", "Saturdays off", "Hours", "Short rest", "Fairness", "Monthly amounts"];
+export const CHECK_CATEGORIES = ["Not started", "Coverage", "Rules", "Days off", "Saturdays off", "Hours", "Short rest", "Preferences", "Fairness", "Monthly amounts"];
 
 /** Someone this far from what most people got this month is flagged. */
 export const FAIRNESS_GAP = 2;
@@ -122,7 +128,7 @@ export function checkSchedule(input: CheckInput): CheckIssue[] {
   const { employees, weekStarts, grid, rules, savedRules } = input;
   const issues: CheckIssue[] = [];
   const add = (issue: Omit<CheckIssue, "id">) =>
-    issues.push({ ...issue, id: `${issue.category}|${issue.employeeId ?? ""}|${issue.offset ?? ""}|${issues.length}` });
+    issues.push({ ...issue, id: `${issue.key}|${issues.length}` });
   const codeAt = (employeeId: string, offset: number) => grid[employeeId]?.[String(offset)] ?? "OFF";
   const weekLabel = (weekIndex: number) => `the week of ${shortDate(weekStarts[weekIndex])}`;
 
@@ -141,6 +147,8 @@ export function checkSchedule(input: CheckInput): CheckIssue[] {
     add({
       severity: "heads-up",
       category: "Not started",
+      key: `Not started:w${weekIndex}`,
+      scopeDays: [],
       message: `Nothing is scheduled ${weekLabel(weekIndex)} yet. Use Auto Generate or add shifts.`,
     });
   }
@@ -154,23 +162,23 @@ export function checkSchedule(input: CheckInput): CheckIssue[] {
 
     if (holiday) {
       if (holiday.mode === "short" && working === 0) {
-        add({ severity: "problem", category: "Coverage", offset: day.offset, message: `${dayLabel(day)} (${holiday.name}): nobody is scheduled for the short day.` });
+        add({ severity: "problem", category: "Coverage", key: `Coverage:short-holiday:${day.offset}`, scopeDays: [day.offset], offset: day.offset, message: `${dayLabel(day)} (${holiday.name}): nobody is scheduled for the short day.` });
       }
       continue;
     }
 
     if (working === 0) {
-      add({ severity: "problem", category: "Coverage", offset: day.offset, message: `${dayLabel(day)}: nobody is scheduled.` });
+      add({ severity: "problem", category: "Coverage", key: `Coverage:nobody:${day.offset}`, scopeDays: [day.offset], offset: day.offset, message: `${dayLabel(day)}: nobody is scheduled.` });
       continue;
     }
 
     const openers = codes.filter(input.isOpener).length;
     const closers = codes.filter(input.isCloser).length;
     if (openers < rules.openersPerDay) {
-      add({ severity: "problem", category: "Coverage", offset: day.offset, message: `${dayLabel(day)}: ${openers} opener${openers === 1 ? "" : "s"}, needs ${rules.openersPerDay}.` });
+      add({ severity: "problem", category: "Coverage", key: `Coverage:opener:${day.offset}`, scopeDays: [day.offset], offset: day.offset, message: `${dayLabel(day)}: ${openers} opener${openers === 1 ? "" : "s"}, needs ${rules.openersPerDay}.` });
     }
     if (closers < rules.closersPerDay) {
-      add({ severity: "problem", category: "Coverage", offset: day.offset, message: `${dayLabel(day)}: ${closers} closer${closers === 1 ? "" : "s"}, needs ${rules.closersPerDay}.` });
+      add({ severity: "problem", category: "Coverage", key: `Coverage:closer:${day.offset}`, scopeDays: [day.offset], offset: day.offset, message: `${dayLabel(day)}: ${closers} closer${closers === 1 ? "" : "s"}, needs ${rules.closersPerDay}.` });
     }
   }
 
@@ -190,14 +198,14 @@ export function checkSchedule(input: CheckInput): CheckIssue[] {
           (rule) => rule.rule_type === "unavailable" && rule.rule_value.split(",").map(weekdayIndex).includes(day.weekday),
         );
         if (unavailable) {
-          add({ severity: "problem", category: "Rules", employeeId: employee.id, offset: day.offset, message: `${employee.employee_name} is unavailable ${day.name}s but is scheduled ${dayLabel(day)}.` });
+          add({ severity: "problem", category: "Rules", key: `Rules:unavailable:${employee.id}:${day.offset}`, scopeDays: [day.offset], employeeId: employee.id, offset: day.offset, message: `${employee.employee_name} is unavailable ${day.name}s but is scheduled ${dayLabel(day)}.` });
         }
 
         const limits = allowed.filter((rule) => rule.shift === code);
         const notAllowed = limits.length > 0 && !limits.some((rule) => rule.days.includes(day.weekday));
         const isBlocked = blocked.some((rule) => rule.shift === code && rule.days.includes(day.weekday));
         if (notAllowed || isBlocked) {
-          add({ severity: "problem", category: "Rules", employeeId: employee.id, offset: day.offset, message: `${employee.employee_name} has shift ${code} on ${dayLabel(day)}, but that shift can't be used on ${day.name}s.` });
+          add({ severity: "problem", category: "Rules", key: `Rules:shift-day:${employee.id}:${day.offset}`, scopeDays: [day.offset], employeeId: employee.id, offset: day.offset, message: `${employee.employee_name} has shift ${code} on ${dayLabel(day)}, but that shift can't be used on ${day.name}s.` });
         }
       }
 
@@ -207,7 +215,7 @@ export function checkSchedule(input: CheckInput): CheckIssue[] {
         if (weekdayIndex(dayValue || "") !== day.weekday || !required || code === required) continue;
         // Approved days off and holidays win over a required shift.
         if (["PTO", "HOLIDAY", "HOLIDAY_SHORT"].includes(code)) continue;
-        add({ severity: "heads-up", category: "Rules", employeeId: employee.id, offset: day.offset, message: `${employee.employee_name} should work ${required} on ${day.name}s but has ${code} on ${dayLabel(day)}.` });
+        add({ severity: "heads-up", category: "Rules", key: `Rules:required:${employee.id}:${day.offset}`, scopeDays: [day.offset], employeeId: employee.id, offset: day.offset, message: `${employee.employee_name} should work ${required} on ${day.name}s but has ${code} on ${dayLabel(day)}.` });
       }
     }
   }
@@ -223,6 +231,8 @@ export function checkSchedule(input: CheckInput): CheckIssue[] {
         add({
           severity: "problem",
           category: "Days off",
+          key: `Days off:${employee.id}:w${weekIndex}`,
+          scopeDays: weekDays.map((day) => day.offset),
           employeeId: employee.id,
           offset: weekDays[weekDays.length - 1]?.offset,
           message:
@@ -234,9 +244,54 @@ export function checkSchedule(input: CheckInput): CheckIssue[] {
 
       const hours = weekDays.reduce((sum, day) => sum + input.hoursFor(codeAt(employee.id, day.offset), day.offset), 0);
       if (hours > rules.targetHours + 1) {
-        add({ severity: "heads-up", category: "Hours", employeeId: employee.id, message: `${employee.employee_name} has ${hours.toFixed(2)} hours ${weekLabel(weekIndex)} (target ${rules.targetHours}).` });
+        add({ severity: "heads-up", category: "Hours", key: `Hours:over:${employee.id}:w${weekIndex}`, scopeDays: weekDays.map((day) => day.offset), employeeId: employee.id, message: `${employee.employee_name} has ${hours.toFixed(2)} hours ${weekLabel(weekIndex)} (target ${rules.targetHours}).` });
       } else if (hours < rules.targetHours - 4) {
-        add({ severity: "heads-up", category: "Hours", employeeId: employee.id, message: `${employee.employee_name} has ${hours.toFixed(2)} hours ${weekLabel(weekIndex)} (target ${rules.targetHours}).` });
+        add({ severity: "heads-up", category: "Hours", key: `Hours:under:${employee.id}:w${weekIndex}`, scopeDays: weekDays.map((day) => day.offset), employeeId: employee.id, message: `${employee.employee_name} has ${hours.toFixed(2)} hours ${weekLabel(weekIndex)} (target ${rules.targetHours}).` });
+      }
+
+      // Closing preferences for this week.
+      const prefs = closingPrefsFor(savedRules, employee.id, weekStarts[weekIndex]);
+      for (const day of weekDays) {
+        if (prefs.avoidDays.has(day.weekday) && input.isCloser(codeAt(employee.id, day.offset))) {
+          add({
+            severity: "heads-up",
+            category: "Preferences",
+            key: `Preferences:avoid:${employee.id}:${day.offset}`,
+            scopeDays: [day.offset],
+            employeeId: employee.id,
+            offset: day.offset,
+            message: `${employee.employee_name} prefers not to close ${day.name}s but closes ${dayLabel(day)}.`,
+          });
+        }
+      }
+      const closeDays = weekDays.filter((day) => input.isCloser(codeAt(employee.id, day.offset)));
+      if (prefs.pattern === "together" && closeDays.length >= 2) {
+        const runs = closeDays.filter((day, index) => index === 0 || closeDays[index - 1].weekday !== day.weekday - 1).length;
+        if (runs > 1) {
+          add({
+            severity: "heads-up",
+            category: "Preferences",
+            key: `Preferences:together:${employee.id}:w${weekIndex}`,
+            scopeDays: weekDays.map((day) => day.offset),
+            employeeId: employee.id,
+            offset: closeDays[0].offset,
+            message: `${employee.employee_name} prefers closing shifts back-to-back, but closes ${closeDays.map((day) => day.name.slice(0, 3)).join(", ")} ${weekLabel(weekIndex)}.`,
+          });
+        }
+      }
+      if (prefs.pattern === "apart") {
+        for (let index = 1; index < closeDays.length; index += 1) {
+          if (closeDays[index - 1].weekday !== closeDays[index].weekday - 1) continue;
+          add({
+            severity: "heads-up",
+            category: "Preferences",
+            key: `Preferences:apart:${employee.id}:${closeDays[index].offset}`,
+            scopeDays: weekDays.map((day) => day.offset),
+            employeeId: employee.id,
+            offset: closeDays[index].offset,
+            message: `${employee.employee_name} prefers closing shifts spread out, but closes ${dayLabel(closeDays[index - 1])} and ${dayLabel(closeDays[index])} back-to-back.`,
+          });
+        }
       }
     }
   });
@@ -258,6 +313,8 @@ export function checkSchedule(input: CheckInput): CheckIssue[] {
         add({
           severity: "heads-up",
           category: "Short rest",
+          key: `Short rest:${employee.id}:${nextDay.offset}`,
+          scopeDays: [day.offset, nextDay.offset],
           employeeId: employee.id,
           offset: nextDay.offset,
           message: `${employee.employee_name} has only ${(restMinutes / 60).toFixed(1)} hours between shifts ${dayLabel(day)} → ${dayLabel(nextDay)}.`,
@@ -279,7 +336,7 @@ export function checkSchedule(input: CheckInput): CheckIssue[] {
       for (const employee of employees) {
         const off = saturdays.filter((day) => !input.isWorking(codeAt(employee.id, day.offset))).length;
         if (off === 0) {
-          add({ severity: "heads-up", category: "Saturdays off", employeeId: employee.id, message: `${employee.employee_name} has no Saturday off in ${monthName}.` });
+          add({ severity: "heads-up", category: "Saturdays off", key: `Saturdays off:${employee.id}`, scopeDays: saturdays.map((day) => day.offset), employeeId: employee.id, message: `${employee.employee_name} has no Saturday off in ${monthName}.` });
         }
       }
     }
@@ -324,6 +381,8 @@ export function checkSchedule(input: CheckInput): CheckIssue[] {
           add({
             severity: "heads-up",
             category: "Fairness",
+            key: `Fairness:${measure.verb}-${measure.noun}:${employee.id}`,
+            scopeDays: monthDays.filter((day) => measure.noun !== "Saturdays" || day.weekday === 5).map((day) => day.offset),
             employeeId: employee.id,
             message: `${employee.employee_name} ${measure.verb} ${value} ${unit} in ${monthName}; most people ${measure.verb === "closes" ? "close" : "open"} ${usual}${context}.`,
           });
@@ -354,6 +413,8 @@ export function checkSchedule(input: CheckInput): CheckIssue[] {
             add({
               severity: "heads-up",
               category: "Monthly amounts",
+              key: `Monthly amounts:${kind}:${weekday}:${employee.id}`,
+              scopeDays: monthDays.filter((day) => day.weekday === weekday).map((day) => day.offset),
               employeeId: employee.id,
               message: `${employee.employee_name} ${kind === "open" ? "opens" : "closes"} ${count} ${WEEKDAY_NAMES[weekday]}${count === 1 ? "" : "s"} in ${monthName}; preferred amount is ${target}.`,
             });
