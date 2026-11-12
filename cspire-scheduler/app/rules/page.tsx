@@ -137,7 +137,7 @@ export default function RulesPage() {
       setErrorMessage(error.message);
     } else {
       // The starter-shift toggle and holidays have their own pages, not this list.
-      setRules(((data as Rule[]) || []).filter((rule) => !["starter_shifts", "holiday", "employee_order", "positions"].includes(rule.rule_type)));
+      setRules(((data as Rule[]) || []).filter((rule) => !["starter_shifts", "holiday", "employee_order", "positions", "position_requirement"].includes(rule.rule_type)));
     }
 
     setLoading(false);

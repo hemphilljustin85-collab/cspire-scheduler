@@ -40,7 +40,7 @@ import { timeOffCode } from "../../src/lib/timeOff";
 import { CHECK_CATEGORIES, checkSchedule, type CheckIssue } from "../../src/lib/scheduleCheck";
 import { EMPLOYEE_ORDER_RULE, parseEmployeeOrder, sortByEmployeeOrder } from "../../src/lib/employeeOrder";
 import { closingPrefsFor } from "../../src/lib/closingPrefs";
-import { findFix, type FixResult } from "../../src/lib/scheduleFix";
+import { findFix, type FixContext, type FixResult } from "../../src/lib/scheduleFix";
 import {
   MonthGridSheet,
   PersonMonthSheet,
@@ -50,6 +50,7 @@ import {
 } from "../../src/components/PrintSheets";
 import { downloadScheduleExcel } from "../../src/lib/scheduleExcel";
 import { isManagerPosition, parsePositions, POSITIONS_RULE } from "../../src/lib/positions";
+import { appliesOn, repairSelection, requirementsFromRules } from "../../src/lib/positionRequirements";
 
 /** A schedule row that can be dragged by its handle (mouse, touch or keyboard). */
 function SortableRow({ id, children }: { id: string; children: (handle: ReactNode) => ReactNode }) {
@@ -119,6 +120,7 @@ type SchedulerRules = {
 };
 
 type SavedRule = {
+  id?: string;
   rule_type: string;
   rule_value: string;
   employee_id: string | null;
@@ -530,7 +532,7 @@ export default function SchedulePage() {
   async function loadRules() {
     const { data, error } = await supabase
       .from("ai_rules")
-      .select("rule_type, rule_value, employee_id, start_date, end_date");
+      .select("id, rule_type, rule_value, employee_id, start_date, end_date");
 
     if (error) {
       console.error("Unable to load scheduling rules:", error);
@@ -1171,6 +1173,16 @@ export default function SchedulePage() {
               opens[a.id] - opens[b.id],
           )
           .slice(0, openerCount);
+        // Position requirements (Positions page): swap people in so the
+        // openers, then the closers, meet them.
+        const dayRequirements = requirementsFromRules(savedRules).map((item) => item.requirement).filter((requirement) => appliesOn(requirement, dayIndex));
+        const openRequirements = dayRequirements.filter((requirement) => requirement.role === "open");
+        const closeRequirements = dayRequirements.filter((requirement) => requirement.role === "close");
+        if (openRequirements.length > 0) {
+          const repaired = repairSelection(openersToday, rotated.filter((employee) => !openersToday.includes(employee)), openRequirements);
+          openersToday.splice(0, openersToday.length, ...repaired);
+        }
+
         const closersToday = rotated
           .filter((employee) => !openersToday.includes(employee))
           .sort(
@@ -1181,6 +1193,14 @@ export default function SchedulePage() {
               closes[a.id] - closes[b.id],
           )
           .slice(0, closerCount);
+        if (closeRequirements.length > 0) {
+          const repaired = repairSelection(
+            closersToday,
+            rotated.filter((employee) => !openersToday.includes(employee) && !closersToday.includes(employee)),
+            closeRequirements,
+          );
+          closersToday.splice(0, closersToday.length, ...repaired);
+        }
 
         rotated.forEach((employee) => {
           let shift: ShiftCode = regularShiftFor(dayIndex);
@@ -1277,7 +1297,20 @@ export default function SchedulePage() {
       weekDays.forEach(tallySaturday);
     });
 
-    const generatedWithPTO = applyPTOToGrid(generated);
+    let generatedWithPTO = applyPTOToGrid(generated);
+
+    // Anything the position requirements still need after picking openers and
+    // closers: let the Fix engine repair it (it never adds a problem).
+    if (requirementsFromRules(savedRules).length > 0) {
+      const tried = new Set<string>();
+      for (let attempt = 0; attempt < 25; attempt += 1) {
+        const next = runCheck(generatedWithPTO).find((issue) => issue.category === "Position rules" && !tried.has(issue.key));
+        if (!next) break;
+        tried.add(next.key);
+        const fixed = findFix(next, generatedWithPTO, fixContext());
+        if (fixed) generatedWithPTO = fixed.grid as ScheduleGrid;
+      }
+    }
 
     const historyNote =
       historyShifts > 0
@@ -1789,7 +1822,15 @@ export default function SchedulePage() {
     setErrorMessage("");
     // Let the button show "Fixing…" before the search runs.
     window.setTimeout(() => {
-      const result: FixResult | null = findFix(issue, grid, {
+      const result: FixResult | null = findFix(issue, grid, fixContext());
+      setFixingId(null);
+      showFixResult(result);
+    }, 20);
+  }
+
+  /** What the Fix engine needs: the check's inputs, locked cells, and the codes allowed each day. */
+  function fixContext(): FixContext {
+    return {
         check: {
           employees,
           days,
@@ -1815,9 +1856,11 @@ export default function SchedulePage() {
           if (holiday) return holiday.mode === "short" ? ["HOLIDAY", HOLIDAY_SHORT_CODE] : [];
           return ["OFF", ...optionsForDay(offset).map((option) => option.code).filter((code) => isWorkingCode(code))];
         },
-      });
-      setFixingId(null);
+    };
+  }
 
+  function showFixResult(result: FixResult | null) {
+    {
       if (!result) {
         setMessage("");
         setErrorMessage(
@@ -1839,7 +1882,7 @@ export default function SchedulePage() {
       setUndoGrid(grid);
       setGrid(result.grid);
       setMessage(`Fixed: ${changes}.${sideEffects} Not saved yet.`);
-    }, 20);
+    }
   }
 
   function undoFix() {
