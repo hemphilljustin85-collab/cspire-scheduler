@@ -7,9 +7,9 @@ workflows:
     instance_type: mac_mini_m2
     working_directory: workforce-scheduler
     integrations:
-      # The name of your App Store Connect API key in Codemagic
+      # The name of your App Store Connect API key in Codemagic (Developer Portal integration)
       # (Teams → Integrations → Developer Portal). Change it if yours is different.
-      app_store_connect: codemagic
+      app_store_connect: Lawn Lens
     environment:
       groups:
         # Codemagic environment group with:
