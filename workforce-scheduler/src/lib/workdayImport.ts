@@ -231,3 +231,69 @@ export function matchWorker(worker: WorkdayWorker, existing: ExistingEmployee[],
   });
   return loose.length === 1 ? loose[0].id : null;
 }
+
+// ---------- Workday job titles → scheduler positions ----------
+
+/** Saved choices, so the next import maps the same titles the same way. */
+export const WORKDAY_TITLE_MAP_RULE = "workday_title_map";
+
+const ROMAN: Record<string, string> = { "1": "I", "2": "II", "3": "III", "4": "IV", i: "I", ii: "II", iii: "III", iv: "IV" };
+const STOP_WORDS = new Set(["of", "and", "the", "-", "&", "retail", "store", "c", "spire"]);
+
+function splitLevel(text: string): { words: string[]; level: string | null } {
+  const words = text
+    .toLowerCase()
+    .replace(/[()\-–—,/]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  let level: string | null = null;
+  const last = words.at(-1);
+  if (last && ROMAN[last]) {
+    level = ROMAN[last];
+    words.pop();
+  } else if (last && /^level$/.test(words.at(-2) ?? "") && ROMAN[last]) {
+    level = ROMAN[last];
+    words.splice(-2, 2);
+  }
+  return { words, level };
+}
+
+/** "lead" ~ "leader", "tech" ~ "technician". */
+function sameWord(a: string, b: string) {
+  if (a === b) return true;
+  const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+  return short.length >= 4 && long.startsWith(short);
+}
+
+/**
+ * Best scheduler position for a Workday job title, or null when nothing fits.
+ * Exact name first; then abbreviations ("Associate Sales Representative II" → "ASR II");
+ * then titles that contain every word of a position ("Store Manager - Magee" → "Store Manager").
+ * A level (I, II, 1, 2) has to agree when either side has one.
+ */
+export function guessPosition(title: string | null, positions: string[]): string | null {
+  const text = (title || "").trim();
+  if (!text) return null;
+  const exact = positions.find((name) => name.toLowerCase() === text.toLowerCase());
+  if (exact) return exact;
+
+  const t = splitLevel(text);
+  const titleWords = t.words.filter((word) => !STOP_WORDS.has(word));
+  const acronym = titleWords.map((word) => word[0]).join("");
+  let best: { name: string; score: number } | null = null;
+
+  for (const name of positions) {
+    const p = splitLevel(name);
+    if ((p.level || t.level) && p.level !== t.level) continue;
+    const base = p.words.join("");
+    let score = 0;
+    if (p.words.length === 1 && base.length >= 2 && base.length <= 5 && base === acronym) score = 3;
+    else if (p.words.length > 0 && p.words.every((word) => t.words.some((titleWord) => sameWord(word, titleWord)))) {
+      // More words matched wins; then a position that starts like the title ("Assistant …").
+      score = 2 + p.words.length / 10 + (sameWord(p.words[0], t.words[0] ?? "") ? 0.05 : 0);
+    }
+    else if (p.words.length === 1 && base.length >= 2 && base.length <= 5 && acronym.includes(base)) score = 1;
+    if (score > 0 && (!best || score > best.score)) best = { name, score };
+  }
+  return best?.name ?? null;
+}

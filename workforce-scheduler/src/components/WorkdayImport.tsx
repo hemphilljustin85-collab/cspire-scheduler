@@ -1,8 +1,11 @@
 "use client";
 
-import { ChangeEvent, useMemo, useState } from "react";
+import { ChangeEvent, useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
+import { loadPositions, savePositions, type Position } from "../lib/positions";
 import {
+  WORKDAY_TITLE_MAP_RULE,
+  guessPosition,
   matchWorker,
   parseWorkdayRows,
   readReportFile,
@@ -21,6 +24,10 @@ type Existing = {
 
 /** "add", "skip", or the id of the existing employee to update. */
 type Action = string;
+
+/** What a Workday title becomes: a position name, KEEP (leave as is), or NEW (add the title as a position). */
+const KEEP = "__keep__";
+const NEW = "__new__";
 
 const FIELD_LABELS: Record<string, string> = {
   name: "Name",
@@ -52,7 +59,33 @@ export default function WorkdayImport({
   const [fileName, setFileName] = useState("");
   const [actions, setActions] = useState<Action[]>([]);
   const [keepNames, setKeepNames] = useState(true);
-  const [useTitles, setUseTitles] = useState(false);
+  const [updatePositions, setUpdatePositions] = useState(true);
+  const [positions, setPositions] = useState<Position[]>(positionNames.map((name) => ({ name, isManager: false })));
+  const [positionsRuleId, setPositionsRuleId] = useState<string | null>(null);
+  const [savedTitleMap, setSavedTitleMap] = useState<{ id: string | null; map: Record<string, string> }>({ id: null, map: {} });
+  const [titleMap, setTitleMap] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    void loadPositions().then((result) => {
+      setPositions(result.positions);
+      setPositionsRuleId(result.ruleId);
+    });
+    void supabase
+      .from("ai_rules")
+      .select("id, rule_value")
+      .eq("rule_type", WORKDAY_TITLE_MAP_RULE)
+      .is("employee_id", null)
+      .limit(1)
+      .maybeSingle()
+      .then(({ data }: { data: { id: string; rule_value: string } | null }) => {
+        if (!data) return;
+        try {
+          setSavedTitleMap({ id: data.id, map: JSON.parse(data.rule_value) || {} });
+        } catch {
+          setSavedTitleMap({ id: data.id, map: {} });
+        }
+      });
+  }, []);
   const [reading, setReading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -75,6 +108,13 @@ export default function WorkdayImport({
         }
         return worker.status === "Active" ? "add" : "skip";
       });
+      const names = positions.map((position) => position.name);
+      const titles = [...new Set(parsed.workers.map((worker) => worker.position).filter((title): title is string => Boolean(title)))];
+      setTitleMap(Object.fromEntries(titles.map((title) => {
+        const saved = savedTitleMap.map[title];
+        const choice = saved && (saved === KEEP || names.includes(saved)) ? saved : guessPosition(title, names) ?? KEEP;
+        return [title, choice];
+      })));
       setReport(parsed);
       setActions(initial);
       setFileName(file.name);
@@ -105,6 +145,23 @@ export default function WorkdayImport({
     return new Set([...seen].filter(([, count]) => count > 1).map(([id]) => id));
   }, [actions]);
 
+  const titles = useMemo(() => {
+    const counts = new Map<string, number>();
+    report?.workers.forEach((worker) => {
+      if (worker.position) counts.set(worker.position, (counts.get(worker.position) ?? 0) + 1);
+    });
+    return [...counts.entries()];
+  }, [report]);
+
+  /** Position a worker ends up with: null = leave as is (or the default for new people). */
+  function positionFor(worker: WorkdayWorker): string | null {
+    if (!worker.position) return null;
+    const choice = titleMap[worker.position] ?? KEEP;
+    if (choice === KEEP) return null;
+    if (choice === NEW) return worker.position;
+    return choice;
+  }
+
   async function apply() {
     if (!report) return;
     if (duplicateTargets.size > 0) {
@@ -113,6 +170,23 @@ export default function WorkdayImport({
     }
     setSaving(true);
     setError("");
+
+    // Titles to add as new positions, then remember the title → position choices.
+    const newTitles = Object.entries(titleMap).filter(([, choice]) => choice === NEW).map(([title]) => title)
+      .filter((title) => !positions.some((position) => position.name.toLowerCase() === title.toLowerCase()));
+    if (newTitles.length > 0) {
+      const saved = await savePositions([...positions, ...newTitles.map((name) => ({ name, isManager: /manager/i.test(name) }))], positionsRuleId);
+      if (saved.error) {
+        setSaving(false);
+        setError(`Couldn't add the new positions: ${saved.error}`);
+        return;
+      }
+    }
+    const mapToSave = { ...savedTitleMap.map, ...Object.fromEntries(Object.entries(titleMap).map(([title, choice]) => [title, choice === NEW ? title : choice])) };
+    const mapValue = JSON.stringify(mapToSave);
+    if (savedTitleMap.id) await supabase.from("ai_rules").update({ rule_value: mapValue }).eq("id", savedTitleMap.id);
+    else await supabase.from("ai_rules").insert({ employee_id: null, rule_type: WORKDAY_TITLE_MAP_RULE, rule_value: mapValue, start_date: null, end_date: null });
+
     let added = 0;
     let updated = 0;
     const failures: string[] = [];
@@ -124,10 +198,7 @@ export default function WorkdayImport({
         const { error: insertError } = await supabase.from("employees").insert({
           employee_name: worker.name,
           employee_id: worker.employeeId,
-          position:
-            useTitles && worker.position
-              ? worker.position
-              : positionNames.find((name) => name.toLowerCase() === (worker.position || "").trim().toLowerCase()) ?? (defaultPosition || null),
+          position: positionFor(worker) ?? (defaultPosition || null),
           status: worker.status,
           hire_date: worker.hireDate,
           email: worker.email,
@@ -145,7 +216,8 @@ export default function WorkdayImport({
       if (worker.phone) changes.phone = worker.phone;
       if (worker.hireDate) changes.hire_date = worker.hireDate;
       if (!keepNames) changes.employee_name = worker.name;
-      if (useTitles && worker.position) changes.position = worker.position;
+      const mapped = positionFor(worker);
+      if (updatePositions && mapped) changes.position = mapped;
       const { data, error: updateError } = await supabase.from("employees").update(changes).eq("id", action).select("id");
       if (updateError) failures.push(`${worker.name}: ${updateError.message}`);
       else if (!data || data.length === 0) failures.push(`${worker.name}: not saved (no permission to change this employee)`);
@@ -197,10 +269,33 @@ export default function WorkdayImport({
                 Keep the names already in the scheduler (e.g. nicknames)
               </label>
               <label className="flex items-center gap-2">
-                <input type="checkbox" checked={useTitles} onChange={(e) => setUseTitles(e.target.checked)} />
-                Use Workday job titles as positions
+                <input type="checkbox" checked={updatePositions} onChange={(e) => setUpdatePositions(e.target.checked)} />
+                Update positions of people already in the scheduler
               </label>
             </div>
+
+            {titles.length > 0 && (
+              <div className="mt-4 rounded-xl border bg-slate-50 p-4">
+                <h3 className="font-semibold">Workday job titles → positions</h3>
+                <p className="mt-0.5 text-xs text-slate-500">Check each one. Your choices are remembered for the next import.</p>
+                <div className="mt-3 space-y-2">
+                  {titles.map(([title, count]) => (
+                    <div key={title} className="flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                      <span className="text-sm"><span className="font-medium">{title}</span> <span className="text-slate-500">· {count} {count === 1 ? "person" : "people"}</span></span>
+                      <select
+                        value={titleMap[title] ?? KEEP}
+                        onChange={(e) => setTitleMap((current) => ({ ...current, [title]: e.target.value }))}
+                        className={`w-full rounded-lg border px-2 py-1.5 text-sm sm:w-64 ${(titleMap[title] ?? KEEP) === KEEP ? "border-amber-300 bg-amber-50" : "border-slate-300 bg-white"}`}
+                      >
+                        {positions.map((position) => <option key={position.name} value={position.name}>{position.name}</option>)}
+                        <option value={NEW}>Add &quot;{title}&quot; as a new position</option>
+                        <option value={KEEP}>Don&apos;t change (new people: {defaultPosition || "no position"})</option>
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="mt-4 divide-y rounded-xl border">
               {report.workers.map((worker, index) => {
@@ -214,6 +309,15 @@ export default function WorkdayImport({
                         {worker.status === "Inactive" && <span className="ml-2 rounded-full bg-slate-200 px-2 py-0.5 text-xs font-medium text-slate-700">Inactive in Workday</span>}
                       </div>
                       <div className="truncate text-xs text-slate-500">{workerLabel(worker) || "No other details"}</div>
+                      {action !== "skip" && (
+                        <div className="text-xs font-medium text-blue-700">
+                          Position: {action === "add"
+                            ? positionFor(worker) ?? defaultPosition ?? "none"
+                            : updatePositions && positionFor(worker)
+                              ? positionFor(worker)
+                              : `${employees.find((employee) => employee.id === action)?.position || "none"} (unchanged)`}
+                        </div>
+                      )}
                     </div>
                     <select
                       value={action}
