@@ -1,3 +1,10 @@
+/**
+ * Password reset by text message is hidden until texting is set up in Supabase
+ * (Authentication → Providers → Phone). To turn it on, set NEXT_PUBLIC_PHONE_RECOVERY=on
+ * on Vercel and in Codemagic's workforce_scheduler group, then redeploy / rebuild.
+ */
+export const PHONE_RECOVERY_ENABLED = process.env.NEXT_PUBLIC_PHONE_RECOVERY === "on";
+
 // Phone numbers for sign-in recovery are stored by Supabase in E.164 form (+16015551234).
 
 /** Turns what someone typed ("(601) 555-1234", "601-555-1234", "+1 601…") into +1XXXXXXXXXX, or null. */

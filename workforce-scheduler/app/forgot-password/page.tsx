@@ -5,13 +5,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { supabase } from "../../src/lib/supabase";
 import { publicSiteUrl } from "../../src/lib/native";
-import { formatPhone, phoneErrorMessage, toE164 } from "../../src/lib/phone";
+import { PHONE_RECOVERY_ENABLED, formatPhone, phoneErrorMessage, toE164 } from "../../src/lib/phone";
 
 type Method = "email" | "phone";
 
 export default function ForgotPasswordPage() {
   const router = useRouter();
-  const [method, setMethod] = useState<Method>("email");
+  const [method, setMethod] = useState<Method>("email"); // only "email" unless phone recovery is on
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [codeSentTo, setCodeSentTo] = useState<string | null>(null);
@@ -97,10 +97,12 @@ export default function ForgotPasswordPage() {
             : "We’ll text a code to the recovery phone on your account."}
         </p>
 
-        <div className="mt-5 flex gap-1 rounded-lg bg-slate-100 p-1">
-          {tab("email", "Email")}
-          {tab("phone", "Phone number")}
-        </div>
+        {PHONE_RECOVERY_ENABLED && (
+          <div className="mt-5 flex gap-1 rounded-lg bg-slate-100 p-1">
+            {tab("email", "Email")}
+            {tab("phone", "Phone number")}
+          </div>
+        )}
 
         {message && <p className="mt-5 rounded-lg bg-green-50 p-3 text-green-800">{message}</p>}
         {error && <p className="mt-5 rounded-lg bg-red-50 p-3 text-red-800">{error}</p>}
