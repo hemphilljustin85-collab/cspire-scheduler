@@ -29,6 +29,7 @@ import {
   STARTER_SHIFTS_HIDDEN,
   STARTER_SHIFTS_RULE,
   classifyShiftRoles,
+  compactShiftLines,
   customShiftToDefinition,
   fallbackShift,
   isWorkingCode,
@@ -63,7 +64,7 @@ function SortableRow({ id, children }: { id: string; children: (handle: ReactNod
       type="button"
       aria-label="Drag to reorder"
       title="Drag to reorder"
-      className="-ml-1 mr-1 cursor-grab touch-none rounded px-1 text-lg leading-none text-slate-400 hover:bg-slate-100 hover:text-slate-700 active:cursor-grabbing"
+      className="-ml-1 mr-1 hidden cursor-grab touch-none sm:inline rounded px-1 text-lg leading-none text-slate-400 hover:bg-slate-100 hover:text-slate-700 active:cursor-grabbing"
       {...attributes}
       {...listeners}
     >
@@ -2443,11 +2444,11 @@ export default function SchedulePage() {
               )}
 
               <div className="overflow-x-auto rounded-xl bg-white shadow">
-                <table className="min-w-[1150px] w-full border-collapse">
+                <table className="w-full border-collapse sm:min-w-[1150px]">
                   <thead>
                     <tr className="bg-slate-900 text-white">
-                      <th className="sticky left-0 z-20 min-w-52 bg-slate-900 p-3 text-left">
-                        Employee
+                      <th className="sticky left-0 z-20 w-[5.5rem] bg-slate-900 p-1.5 text-left text-xs sm:w-auto sm:min-w-52 sm:p-3 sm:text-base">
+                        <span className="sm:hidden">Name</span><span className="hidden sm:inline">Employee</span>
                       </th>
                       {weekDays.map((day) => {
                         const isToday = day.date === today;
@@ -2457,7 +2458,7 @@ export default function SchedulePage() {
                           <th
                             key={day.date}
                             id={`day-${day.offset}`}
-                            className={`min-w-36 scroll-mt-24 p-3 text-center ${isToday ? "bg-blue-700 ring-2 ring-inset ring-blue-300" : ""} ${day.inMonth ? "" : "bg-slate-700"} ${
+                            className={`scroll-mt-24 px-0.5 py-1.5 text-center sm:min-w-36 sm:p-3 ${isToday ? "bg-blue-700 ring-2 ring-inset ring-blue-300" : ""} ${day.inMonth ? "" : "bg-slate-700"} ${
                               cellIssues.get(`day|${day.offset}`) === "problem"
                                 ? "ring-4 ring-inset ring-red-400"
                                 : cellIssues.get(`day|${day.offset}`) === "heads-up"
@@ -2465,18 +2466,25 @@ export default function SchedulePage() {
                                   : ""
                             } ${flashTarget === `day-${day.offset}` ? "animate-pulse" : ""}`}
                           >
-                            <div>{day.name}</div>
-                            <div className="text-xs font-normal text-slate-300">
+                            <div className="sm:hidden">
+                              <div className="text-xs">{day.name.slice(0, 3)}</div>
+                              <div className="text-[10px] font-normal text-slate-300">{day.date.slice(5).replace("-", "/").replace(/^0/, "")}</div>
+                              <div className="text-[10px] font-normal text-slate-300">
+                                {holiday ? "★" : `${dailyCoverage[day.offset]?.openers ?? 0}·${dailyCoverage[day.offset]?.closers ?? 0}`}
+                              </div>
+                            </div>
+                            <div className="hidden sm:block">{day.name}</div>
+                            <div className="hidden text-xs font-normal text-slate-300 sm:block">
                               {displayDate(day.date)}
                               {!day.inMonth && " · other month"}
                             </div>
                             {holiday ? (
-                              <div className="mt-1 inline-flex rounded-full bg-amber-200 px-2 py-0.5 text-xs font-semibold text-amber-900">
+                              <div className="mt-1 hidden sm:inline-flex rounded-full bg-amber-200 px-2 py-0.5 text-xs font-semibold text-amber-900">
                                 ★ {holiday.name}
                                 {holiday.mode === "closed" ? " · closed" : " · short day"}
                               </div>
                             ) : (
-                              <div className="mt-1 text-xs font-normal text-slate-300">
+                              <div className="mt-1 hidden text-xs font-normal text-slate-300 sm:block">
                                 {dailyCoverage[day.offset]?.openers ?? 0} open ·{" "}
                                 {dailyCoverage[day.offset]?.closers ?? 0} close
                               </div>
@@ -2484,7 +2492,7 @@ export default function SchedulePage() {
                           </th>
                         );
                       })}
-                      <th className="min-w-24 p-3 text-center">Hours</th>
+                      <th className="px-0.5 py-1.5 text-center text-xs sm:min-w-24 sm:p-3 sm:text-base"><span className="sm:hidden">Hrs</span><span className="hidden sm:inline">Hours</span></th>
                     </tr>
                   </thead>
 
@@ -2503,12 +2511,12 @@ export default function SchedulePage() {
                         <SortableRow key={employee.id} id={employee.id}>
                           {(handle) => (
                           <>
-                          <td id={`emp-${employee.id}-${weekIndex}`} className={`sticky left-0 z-10 bg-white p-3 ${flashTarget === `emp-${employee.id}-${weekIndex}` ? "animate-pulse bg-amber-100" : ""}`}>
+                          <td id={`emp-${employee.id}-${weekIndex}`} className={`sticky left-0 z-10 max-w-[5.5rem] bg-white p-1.5 sm:max-w-none sm:p-3 ${flashTarget === `emp-${employee.id}-${weekIndex}` ? "animate-pulse bg-amber-100" : ""}`}>
                             <div className="flex items-start">
                               {handle}
-                              <div>
-                                <div className="font-semibold">{employee.employee_name}</div>
-                                <div className="text-xs text-slate-500">
+                              <div className="min-w-0">
+                                <div className="truncate text-xs font-semibold sm:text-base">{employee.employee_name}</div>
+                                <div className="hidden text-xs text-slate-500 sm:block">
                                   {employee.position || "No position"}
                                 </div>
                               </div>
@@ -2526,9 +2534,24 @@ export default function SchedulePage() {
                               <td
                                 key={day.date}
                                 id={`cell-${employee.id}-${day.offset}`}
-                                className={`p-2 ${day.inMonth ? "" : "bg-slate-50"} ${flashTarget === `cell-${employee.id}-${day.offset}` ? "animate-pulse bg-amber-100" : ""}`}
+                                className={`px-0.5 py-1 sm:p-2 ${day.inMonth ? "" : "bg-slate-50"} ${flashTarget === `cell-${employee.id}-${day.offset}` ? "animate-pulse bg-amber-100" : ""}`}
                               >
+                                <div className="relative">
+                                {/* Phone: a small label; tapping it opens the same picker (the select sits invisibly on top). */}
+                                <div
+                                  aria-hidden="true"
+                                  className={`flex min-h-9 flex-col items-center justify-center rounded-md border border-slate-300 px-0.5 text-center text-[10px] font-semibold leading-tight sm:hidden ${shift.className} ${approvedPTO ? "ring-2 ring-purple-300" : ""} ${day.inMonth ? "" : "opacity-70"} ${
+                                    cellIssues.get(`${employee.id}|${day.offset}`) === "problem"
+                                      ? "ring-2 ring-red-500"
+                                      : cellIssues.get(`${employee.id}|${day.offset}`) === "heads-up"
+                                        ? "ring-2 ring-amber-400"
+                                        : ""
+                                  }`}
+                                >
+                                  {compactShiftLines(shift).map((line) => <span key={line}>{line}</span>)}
+                                </div>
                                 <select
+                                  aria-label={`${employee.employee_name}, ${day.name}`}
                                   value={code}
                                   disabled={approvedPTO}
                                   onChange={(event) =>
@@ -2538,7 +2561,7 @@ export default function SchedulePage() {
                                       event.target.value as ShiftCode,
                                     )
                                   }
-                                  className={`w-full rounded-lg border border-slate-300 px-2 py-2 text-sm font-medium ${shift.className} ${approvedPTO ? "cursor-not-allowed opacity-80 ring-2 ring-purple-300" : ""} ${day.inMonth ? "" : "opacity-70"} ${
+                                  className={`absolute inset-0 h-full w-full opacity-0 sm:static sm:h-auto sm:opacity-100 rounded-lg border border-slate-300 px-2 py-2 text-sm font-medium ${shift.className} ${approvedPTO ? "cursor-not-allowed opacity-80 ring-2 ring-purple-300" : ""} ${day.inMonth ? "" : "opacity-70"} ${
                                     cellIssues.get(`${employee.id}|${day.offset}`) === "problem"
                                       ? "ring-2 ring-red-500"
                                       : cellIssues.get(`${employee.id}|${day.offset}`) === "heads-up"
@@ -2556,13 +2579,14 @@ export default function SchedulePage() {
                                     </option>
                                   ))}
                                 </select>
+                                </div>
                               </td>
                             );
                           })}
 
-                          <td className="p-3 text-center">
+                          <td className="px-0.5 py-1 text-center sm:p-3">
                             <span
-                              className={`inline-flex min-w-16 justify-center rounded-full px-3 py-1 font-bold ${
+                              className={`inline-flex justify-center rounded-full px-1 py-0.5 text-[10px] font-bold sm:min-w-16 sm:px-3 sm:py-1 sm:text-base ${
                                 weekHours > rules.targetHours
                                   ? "bg-red-100 text-red-800"
                                   : weekHours >= rules.targetHours - 2
@@ -2584,12 +2608,12 @@ export default function SchedulePage() {
 
                   <tfoot>
                     <tr className="bg-slate-100 font-semibold">
-                      <td className="sticky left-0 bg-slate-100 p-3">
-                        Daily coverage
+                      <td className="sticky left-0 bg-slate-100 p-1.5 text-xs sm:p-3 sm:text-base">
+                        <span className="sm:hidden">Working</span><span className="hidden sm:inline">Daily coverage</span>
                       </td>
                       {weekDays.map((day) => (
-                        <td key={day.date} className="p-3 text-center text-sm">
-                          {dailyCoverage[day.offset]?.working ?? 0} working
+                        <td key={day.date} className="px-0.5 py-1.5 text-center text-xs sm:p-3 sm:text-sm">
+                          {dailyCoverage[day.offset]?.working ?? 0}<span className="hidden sm:inline"> working</span>
                         </td>
                       ))}
                       <td />
