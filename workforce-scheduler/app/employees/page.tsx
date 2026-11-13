@@ -161,7 +161,7 @@ export default function EmployeesPage() {
 
   async function removeEmployee(employee: Employee) {
     const confirmed = window.confirm(
-      `Remove ${employee.employee_name}? This cannot be undone.`,
+      `Remove ${employee.employee_name}?\n\nIf they're on any saved schedule, they'll be marked Inactive instead so past schedules stay correct. Inactive people aren't scheduled.`,
     );
 
     if (!confirmed) return;
@@ -169,19 +169,47 @@ export default function EmployeesPage() {
     setMessage("");
     setErrorMessage("");
 
-    const { error } = await supabase
+    // Their running totals and personal rules only exist for scheduling; clear
+    // them first so they don't block the delete. (Errors here are ignored; the
+    // delete below reports anything that still blocks it.)
+    await supabase.from("schedule_metrics").delete().eq("employee_id", employee.id);
+    await supabase.from("ai_rules").delete().eq("employee_id", employee.id);
+
+    const { data, error } = await supabase
       .from("employees")
       .delete()
-      .eq("id", employee.id);
+      .eq("id", employee.id)
+      .select("id");
 
-    if (error) {
-      console.error(error);
-      setErrorMessage(error.message);
+    if (!error && data && data.length > 0) {
+      setMessage(`${employee.employee_name} was removed.`);
+      await loadEmployees();
       return;
     }
 
-    setMessage("Employee removed.");
-    await loadEmployees();
+    // Still referenced (saved schedules, days off): keep the history and mark
+    // them Inactive, which takes them off every schedule from now on.
+    const blockedByHistory = error?.code === "23503" || /foreign key/i.test(error?.message || "");
+    if (blockedByHistory || (!error && (!data || data.length === 0))) {
+      const { data: updated, error: updateError } = await supabase
+        .from("employees")
+        .update({ status: "Inactive" })
+        .eq("id", employee.id)
+        .select("id");
+
+      if (!updateError && updated && updated.length > 0) {
+        setMessage(
+          `${employee.employee_name} is on saved schedules, so they were marked Inactive instead of deleted. Past schedules keep their shifts; they won't be scheduled anymore.`,
+        );
+        await loadEmployees();
+        return;
+      }
+      setErrorMessage(updateError?.message || "Your account doesn't have permission to change this employee.");
+      return;
+    }
+
+    console.error(error);
+    setErrorMessage(error?.message || "Couldn't remove this employee.");
   }
 
   return (
