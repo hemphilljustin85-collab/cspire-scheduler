@@ -5,6 +5,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { supabase } from "../../src/lib/supabase";
 import { DEFAULT_POSITIONS, loadPositions, positionOptions, type Position } from "../../src/lib/positions";
 import { downloadCsv } from "../../src/lib/csv";
+import WorkdayImport from "../../src/components/WorkdayImport";
 
 type Employee = {
   id: string;
@@ -54,6 +55,7 @@ export default function EmployeesPage() {
   const [message, setMessage] = useState("");
   const [errorMessage, setErrorMessage] = useState("");
   const [positions, setPositions] = useState<Position[]>(DEFAULT_POSITIONS);
+  const [showWorkdayImport, setShowWorkdayImport] = useState(false);
 
   useEffect(() => {
     void loadEmployees();
@@ -192,7 +194,14 @@ export default function EmployeesPage() {
           </p>
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => { setMessage(""); setErrorMessage(""); setShowWorkdayImport(true); }}
+            className="rounded-lg border border-slate-300 bg-white px-4 py-2 font-medium hover:bg-slate-50"
+          >
+            Import from Workday
+          </button>
           <button type="button" onClick={() => downloadCsv("employees.csv", [
             ["Name","Employee ID","Position","Status","Hire Date","Email","Phone"],
             ...employees.map((employee) => [employee.employee_name,employee.employee_id,employee.position,employee.status,employee.hire_date,employee.email,employee.phone]),
@@ -213,6 +222,20 @@ export default function EmployeesPage() {
         )}
         </div>
       </div>
+
+      {showWorkdayImport && (
+        <WorkdayImport
+          employees={employees}
+          defaultPosition={positions.filter((position) => !position.isManager).at(0)?.name ?? positions[0]?.name ?? ""}
+          positionNames={positions.map((position) => position.name)}
+          onClose={() => setShowWorkdayImport(false)}
+          onDone={(text) => {
+            setShowWorkdayImport(false);
+            setMessage(text);
+            void loadEmployees();
+          }}
+        />
+      )}
 
       {message && (
         <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-green-800">

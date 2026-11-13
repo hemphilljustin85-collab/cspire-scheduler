@@ -50,6 +50,7 @@ import {
   type PrintCell,
 } from "../../src/components/PrintSheets";
 import { downloadScheduleExcel } from "../../src/lib/scheduleExcel";
+import { downloadWorkdayExport, type WorkdayShiftRow } from "../../src/lib/workdayExport";
 import { isNativeApp, publicSiteUrl } from "../../src/lib/native";
 import { hoursClassName, type ScheduleSheetData } from "../../src/lib/scheduleSheet";
 import { isManagerPosition, parsePositions, POSITIONS_RULE } from "../../src/lib/positions";
@@ -92,6 +93,8 @@ type Employee = {
   employee_name: string;
   position: string | null;
   status: string | null;
+  /** Workday / company employee number. */
+  employee_id?: string | null;
 };
 
 type ScheduleRecord = {
@@ -480,7 +483,7 @@ export default function SchedulePage() {
 
     const { data, error } = await supabase
       .from("employees")
-      .select("id, employee_name, position, status")
+      .select("id, employee_name, position, status, employee_id")
       .or("status.eq.Active,status.is.null")
       .order("employee_name");
 
@@ -1867,6 +1870,47 @@ export default function SchedulePage() {
     setExporting(false);
   }
 
+  async function exportWorkday() {
+    setExporting(true);
+    try {
+      // Month view: only the month's own days (the edge days belong to the next/previous month).
+      const exportDays = days.filter((day) => !isMonth || day.inMonth);
+      const rows: WorkdayShiftRow[] = [];
+      for (const employee of orderedEmployees) {
+        for (const day of exportDays) {
+          const code = grid[employee.id]?.[String(day.offset)] ?? "OFF";
+          const shift = shiftFor(code, day.offset);
+          const type: WorkdayShiftRow["type"] =
+            code === "PTO" ? "PTO" : code === "HOLIDAY" ? "Holiday" : isWorkingCode(code) ? "Work" : "Off";
+          rows.push({
+            workdayId: employee.employee_id?.trim() || null,
+            name: employee.employee_name,
+            date: day.date,
+            dayName: day.name,
+            type,
+            start: type === "Work" ? shift.start_time : null,
+            end: type === "Work" ? shift.end_time : null,
+            hours: type === "Off" ? 0 : shift.hours,
+            shiftLabel: shift.label,
+          });
+        }
+      }
+      await downloadWorkdayExport({
+        rows,
+        title: `${storeName ? `${storeName} · ` : ""}${outputTitle} · for Workday`,
+        fileName: isMonth ? `workday-schedule-${month.slice(0, 7)}.xlsx` : `workday-schedule-week-${weekStart}.xlsx`,
+      });
+      const missing = orderedEmployees.filter((employee) => !employee.employee_id?.trim()).map((employee) => employee.employee_name);
+      setMessage(
+        `${isNativeApp() ? "Workday file ready to share or save." : "Workday file downloaded."} "Workday Upload" has one row per shift with Employee IDs; "Entry Sheet" lists each person's shifts in order with a box to check off as you enter them. Includes changes you haven't saved yet.` +
+          (missing.length > 0 ? ` No Employee ID for: ${missing.join(", ")} — add it on the Employees page or use Import from Workday.` : ""),
+      );
+    } catch (error) {
+      setErrorMessage(`Couldn't create the Workday file: ${error instanceof Error ? error.message : "unknown error"}`);
+    }
+    setExporting(false);
+  }
+
   /** Run the schedule check on a grid (the one on screen, or a freshly generated one). */
   function runCheck(gridToCheck: ScheduleGrid): CheckIssue[] {
     return checkSchedule({
@@ -2297,6 +2341,14 @@ export default function SchedulePage() {
             className="rounded-lg border border-emerald-300 px-3 py-2 text-sm font-semibold text-emerald-800 hover:bg-emerald-50 disabled:opacity-50"
           >
             {exporting ? "Creating Excel…" : "Export to Excel"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void exportWorkday()}
+            disabled={exporting}
+            className="rounded-lg border border-blue-300 px-3 py-2 text-sm font-semibold text-blue-800 hover:bg-blue-50 disabled:opacity-50"
+          >
+            Export for Workday
           </button>
           <button
             type="button"
