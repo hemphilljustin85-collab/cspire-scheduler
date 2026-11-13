@@ -174,3 +174,31 @@ export function classifyShiftRoles(shifts: ShiftDefinition[]): ShiftRoles {
 
   return { openers, closers, mids, defaultShift };
 }
+
+function shortTime(value: string): string {
+  const [h, m] = value.split(":").map(Number);
+  const hour = h % 12 || 12;
+  return m ? `${hour}:${String(m).padStart(2, "0")}` : `${hour}`;
+}
+
+/**
+ * Very short text for a shift on a phone screen: one or two lines,
+ * e.g. ["8:30", "5:30"], ["OFF"], ["PTO"], ["Hol"].
+ */
+export function compactShiftLines(shift: {
+  code?: string;
+  label: string;
+  start_time?: string | null;
+  end_time?: string | null;
+}): string[] {
+  if (shift.start_time && shift.end_time) {
+    const lines = [shortTime(shift.start_time), shortTime(shift.end_time)];
+    return shift.code?.startsWith("HOLIDAY") ? ["Hol", lines.join("–")] : lines;
+  }
+  const label = shift.label.trim();
+  if (/^off$/i.test(label)) return ["OFF"];
+  if (/^holiday/i.test(label)) return ["Hol"];
+  const range = label.split(/\s*[–-]\s*/);
+  if (range.length === 2 && range.every((part) => /^\d{1,2}(:\d{2})?\s*(am|pm)?$/i.test(part))) return range;
+  return [label.length > 5 ? `${label.slice(0, 4)}…` : label];
+}
