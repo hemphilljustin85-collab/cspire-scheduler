@@ -2,6 +2,7 @@
 
 import { FormEvent, useEffect, useState } from "react";
 import { supabase } from "../../src/lib/supabase";
+import RecoveryPhone from "../../src/components/RecoveryPhone";
 
 type Settings = {
   id: string;
@@ -312,6 +313,8 @@ export default function SettingsPage() {
           </button>
         </div>
       </form>
+
+      <RecoveryPhone />
 
       <div className="rounded-xl border border-blue-200 bg-blue-50 p-5 text-sm text-blue-900">
         These values are the scheduler defaults. Your Rules page can still
