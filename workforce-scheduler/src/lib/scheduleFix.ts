@@ -6,6 +6,8 @@
 //   - swap:     two people swap shifts on a day (also "give a shift to someone who's off")
 //   - relocate: someone takes a shift on this day and gets a day off elsewhere that week
 //   - trade:    two people trade shifts on two days of the same week
+//   - day off:  someone gets this day off and works a day they had off that
+//               week instead (optionally another person takes over their role)
 // An edit is only used if the issue is gone and it adds no new problem, so a
 // fix always respects coverage, days off, availability, shift-day limits and
 // the other rules the check knows about. Among those, the edit with the fewest
@@ -33,6 +35,8 @@ export type FixResult = {
 
 /** Categories where trading two days within a week is worth trying. */
 const TRADE_CATEGORIES = new Set(["Days off", "Saturdays off", "Hours", "Preferences", "Short rest"]);
+/** Categories where someone may get this day off and work their other day off instead. */
+const DAY_OFF_CATEGORIES = new Set(["Saturdays off", "Days off"]);
 /** Categories where someone may take an extra shift and a day off elsewhere. */
 const RELOCATE_CATEGORIES = new Set(["Coverage"]);
 const MAX_CANDIDATES = 6000;
@@ -103,6 +107,33 @@ export function findFix(
               { employeeId, offset, to: code },
               { employeeId, offset: other.offset, to: "OFF" },
             ]);
+          }
+        }
+      }
+    }
+
+    // day off: give this person the day off, have them work a day they had off
+    // this week, and optionally have someone already working take their role
+    // (e.g. an opener becomes the closer) so coverage holds.
+    if (issue.employeeId && DAY_OFF_CATEGORIES.has(issue.category)) {
+      const a = issue.employeeId;
+      const aCode = codeAt(a, offset);
+      if (aCode !== "OFF" && canChange(a, offset) && context.codesForDay(offset).includes("OFF")) {
+        for (const other of weekDays) {
+          if (codeAt(a, other.offset) !== "OFF" || !canChange(a, other.offset)) continue;
+          for (const code of context.codesForDay(other.offset)) {
+            if (code === "OFF") continue;
+            const base: Edit = [
+              { employeeId: a, offset, to: "OFF" },
+              { employeeId: a, offset: other.offset, to: code },
+            ];
+            push(base);
+            if (!allowedOn(offset, aCode)) continue;
+            for (const c of allIds) {
+              const cCode = codeAt(c, offset);
+              if (c === a || cCode === "OFF" || cCode === aCode || !canChange(c, offset)) continue;
+              push([...base, { employeeId: c, offset, to: aCode }]);
+            }
           }
         }
       }

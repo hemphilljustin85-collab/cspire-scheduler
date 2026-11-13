@@ -1047,20 +1047,47 @@ export default function SchedulePage() {
       });
 
       // Saturdays off go to whoever has had the fewest so far this month.
+      // "Saturday-off goal" is per person per month, so a Saturday can need more
+      // than one person off (e.g. 6 people, 4 Saturdays, goal 1 → 2 off on some),
+      // as long as enough people are left to open and close.
       let saturdayOffAssigned = employees.filter((employee) =>
         plannedDaysOff[employee.id].has(saturdayIndex),
       ).length;
+      const thisSaturday = weekDays.find((day) => day.weekday === saturdayIndex);
+      let saturdayQuota = saturdayOffTarget;
+      if (thisSaturday?.inMonth && !weekHolidays.get(thisSaturday.offset)) {
+        const saturdaysLeft = days.filter(
+          (day) => day.weekday === saturdayIndex && day.inMonth && day.offset >= thisSaturday.offset && !weekHolidays.get(day.offset),
+        ).length;
+        const stillNeeded = employees.reduce(
+          (total, employee) => total + Math.max(0, rules.saturdayOffGoal - saturdaysOff[employee.id]),
+          0,
+        );
+        const spare = Math.max(employeeCount - rules.openersPerDay - rules.closersPerDay, 0);
+        saturdayQuota = Math.min(spare, Math.max(saturdayOffTarget, Math.ceil(stillNeeded / Math.max(saturdaysLeft, 1))));
+      }
       const saturdayCandidates = byRotation(
         employees.filter((employee) => !plannedDaysOff[employee.id].has(saturdayIndex)),
         weekIndex,
       ).sort((a, b) => saturdaysOff[a.id] - saturdaysOff[b.id]);
 
+      // Managers off this Saturday to get their monthly Saturday off; the
+      // "managers working Saturday" rule below leaves them off.
+      const managerSaturdayOff = new Set<string>();
       for (const employee of saturdayCandidates) {
-        if (saturdayOffAssigned >= saturdayOffTarget) break;
+        if (saturdayOffAssigned >= saturdayQuota) break;
         const isManager = managers.some((manager) => manager.id === employee.id);
-        if (!isManager || managers.length > rules.managerSaturdayGoal) {
+        // With only a few managers, still give each one their Saturday off
+        // (one manager per Saturday) when they haven't had it this month.
+        const managerNeedsSaturday =
+          isManager &&
+          Boolean(thisSaturday?.inMonth) &&
+          saturdaysOff[employee.id] < rules.saturdayOffGoal &&
+          managerSaturdayOff.size === 0;
+        if (!isManager || managers.length > rules.managerSaturdayGoal || managerNeedsSaturday) {
           plannedDaysOff[employee.id].add(saturdayIndex);
           saturdayOffAssigned += 1;
+          if (isManager && managers.length <= rules.managerSaturdayGoal) managerSaturdayOff.add(employee.id);
         }
       }
 
@@ -1110,6 +1137,7 @@ export default function SchedulePage() {
         ) {
           const missingManagers = managers.filter(
             (manager) =>
+              !managerSaturdayOff.has(manager.id) &&
               !managerWorkingSaturday.some(
                 (workingManager) => workingManager.id === manager.id,
               ),
@@ -1235,20 +1263,34 @@ export default function SchedulePage() {
         }, 0);
 
         if (currentHours > rules.targetHours + 1) {
-          // Trim regular shifts from the end of the week, Saturdays last,
-          // so Saturday coverage and Saturday-off fairness aren't disturbed.
-          const middleDays = weekDays
+          // Trim shifts on the days that can spare someone most (Saturdays last),
+          // never leaving a day short of openers or closers.
+          const codesOn = (day: DayInfo) => employees.map((other) => generated[other.id][String(day.offset)] ?? "OFF");
+          const workingOn = (day: DayInfo) => codesOn(day).filter(isWorkingCode).length;
+          const candidates = weekDays
             .filter((day) => {
               const code = generated[employee.id][String(day.offset)];
-              return code !== "OFF" && code === regularShiftFor(day.weekday);
+              return (
+                isWorkingCode(code) &&
+                !code.startsWith("HOLIDAY") &&
+                !isApprovedPTO(employee.id, day.offset) &&
+                !employeeRequiredShifts.get(employee.id)?.get(day.weekday)
+              );
             })
-            .reverse()
-            .sort((a, b) => Number(a.weekday === saturdayIndex) - Number(b.weekday === saturdayIndex));
+            .sort(
+              (a, b) =>
+                Number(a.weekday === saturdayIndex) - Number(b.weekday === saturdayIndex) ||
+                workingOn(b) - workingOn(a) ||
+                b.weekday - a.weekday,
+            );
 
-          for (const day of middleDays) {
+          for (const day of candidates) {
             if (currentHours <= rules.targetHours + 1) break;
 
             const trimmed = generated[employee.id][String(day.offset)];
+            const codesToday = codesOn(day);
+            if (isOpener(trimmed) && codesToday.filter(isOpener).length <= rules.openersPerDay) continue;
+            if (isCloser(trimmed) && codesToday.filter(isCloser).length <= rules.closersPerDay) continue;
             generated[employee.id][String(day.offset)] = "OFF";
             recordShift(employee.id, day.date, day.weekday, trimmed, -1);
             currentHours -= getShift(trimmed, shiftOptions).hours;
