@@ -72,7 +72,7 @@ function getRulePlaceholder(ruleType: string) {
     case "allowed_days_for_shift": return "Example: AM|Monday";
     case "blocked_days_for_shift": return "Example: AM|Saturday";
     case "required_shift": return "Example: Monday|CLOSE";
-    case "preferred_day_off": return "Example: Saturday";
+    case "preferred_day_off": return "Example: Tuesday, Wednesday, Thursday";
     case "availability": return "Example: Monday,Tuesday,Wednesday";
     case "unavailable": return "Example: Friday,Saturday";
     case "preferred_shift": return "Example: AM";
@@ -89,7 +89,7 @@ function getRuleHelp(ruleType: string) {
     case "allowed_days_for_shift": return "Format: SHIFT|DAY or SHIFT|DAY,DAY, using a short code from the Shifts page. Example: AM|Monday means the AM shift may only be assigned on Monday.";
     case "blocked_days_for_shift": return "Format: SHIFT|DAY or SHIFT|DAY,DAY. The generator will avoid that shift on those days.";
     case "required_shift": return "Choose an employee, then use DAY|SHIFT with a short code from the Shifts page. Example: Monday|CLOSE.";
-    case "preferred_day_off": return "Choose an employee and enter a day such as Saturday.";
+    case "preferred_day_off": return "One or more days, e.g. Tuesday, Wednesday, Thursday. Each week the day off goes on one of them, spread out so every day stays covered. Leave the employee blank to apply it to everyone.";
     case "monthly_close_target": return "Format: DAY|NUMBER. Example: Saturday|2 means this person should close about 2 Saturdays each month (0 means avoid closing that day). Choose All employees to set it for everyone; a rule for one person overrides it. Auto Generate also counts closes already saved earlier in the month and in the previous month so it stays even.";
     case "avoid_closing_days": return "Choose an employee and enter one or more days, e.g. Thursday or Thursday,Friday. Auto Generate avoids giving them closing shifts on these days when it can, and the schedule check shows a heads-up when they close on one.";
     case "closing_pattern": return "Choose an employee and enter Together (they prefer closing shifts back-to-back, like Thu–Fri–Sat) or Apart (they prefer closes spread out, never two nights in a row). Auto Generate follows this when it can, and the schedule check shows a heads-up when it isn't met.";
