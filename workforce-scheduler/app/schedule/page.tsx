@@ -267,8 +267,10 @@ function makeEmptyGrid(employees: Employee[], days: DayInfo[]): ScheduleGrid {
 }
 
 function normalizeDayName(value: string): number | null {
-  const normalized = value.trim().toLowerCase();
-  const match = WORK_DAYS.findIndex((day) => day.name.toLowerCase() === normalized);
+  const normalized = value.trim().toLowerCase().replace(/\.$/, "");
+  if (!normalized) return null;
+  // "Tuesday", "Tue", "Tues", "Thurs" …
+  const match = WORK_DAYS.findIndex((day) => day.name.toLowerCase() === normalized || (normalized.length >= 3 && day.name.toLowerCase().startsWith(normalized)));
   return match >= 0 ? match : null;
 }
 
@@ -949,6 +951,16 @@ export default function SchedulePage() {
       const employeePreferredDaysOff = new Map<string, Set<number>>();
       const employeeRequiredShifts = new Map<string, Map<number, ShiftCode>>();
 
+      // Preferred days off: a store-wide rule (no employee) applies to everyone
+      // who has none of their own. Several rules / "Tuesday, Wednesday" add up.
+      const storePreferredDaysOff = new Set<number>();
+      for (const rule of activeRules) {
+        if (rule.employee_id || rule.rule_type !== "preferred_day_off") continue;
+        rule.rule_value.split(/[,|/]|\band\b/).map(normalizeDayName).forEach((day) => {
+          if (day !== null) storePreferredDaysOff.add(day);
+        });
+      }
+
       for (const rule of activeRules) {
         if (!rule.employee_id) continue;
         if (rule.rule_type === "unavailable") {
@@ -956,8 +968,10 @@ export default function SchedulePage() {
           employeeUnavailableDays.set(rule.employee_id, new Set(values));
         }
         if (rule.rule_type === "preferred_day_off") {
-          const values = rule.rule_value.split(",").map(normalizeDayName).filter((day): day is number => day !== null);
-          employeePreferredDaysOff.set(rule.employee_id, new Set(values));
+          const values = rule.rule_value.split(/[,|/]|\band\b/).map(normalizeDayName).filter((day): day is number => day !== null);
+          const existing = employeePreferredDaysOff.get(rule.employee_id) ?? new Set<number>();
+          values.forEach((day) => existing.add(day));
+          employeePreferredDaysOff.set(rule.employee_id, existing);
         }
         if (rule.rule_type === "required_shift") {
           const [dayValue, shiftValue] = rule.rule_value.split("|");
@@ -1015,8 +1029,17 @@ export default function SchedulePage() {
         return candidates.find((shift) => shiftAllowedOnDay(shift, weekday)) ?? "OFF";
       }
 
+      /** Days this person would like off: their own rule, else the store-wide one. */
+      const preferredOffFor = (employeeId: string) =>
+        employeePreferredDaysOff.get(employeeId) ?? storePreferredDaysOff;
+
       // Days off for this week, by weekday (0 = Monday).
       const plannedDaysOff: Record<string, Set<number>> = {};
+      // How many people are already off each weekday, so preferred days off are
+      // spread out and no day drops below its openers + closers.
+      const offCount = (weekday: number) =>
+        employees.filter((other) => plannedDaysOff[other.id]?.has(weekday)).length;
+      const maxOffPerDay = Math.max(employeeCount - rules.openersPerDay - rules.closersPerDay, 1);
 
       employees.forEach((employee, employeeIndex) => {
         plannedDaysOff[employee.id] = new Set<number>();
@@ -1032,11 +1055,25 @@ export default function SchedulePage() {
         }
 
         employeeUnavailableDays.get(employee.id)?.forEach((day) => plannedDaysOff[employee.id].add(day));
-        employeePreferredDaysOff.get(employee.id)?.forEach((day) => plannedDaysOff[employee.id].add(day));
 
-        // Rotating days off move each week so nobody always gets the same one.
-        // They land on Monday–Friday; Saturdays off are shared out fairly below.
+        // Preferred days off are a list to choose from ("Tuesday, Wednesday,
+        // Thursday" = one of those days), not all of them. Pick the preferred
+        // day with the fewest people off so far, rotating ties week to week.
         const weekdaysOnly = workingDays - 1;
+        const preferred = [...preferredOffFor(employee.id)].filter((day) => day < workingDays);
+        for (let offNumber = plannedDaysOff[employee.id].size; offNumber < daysOff && preferred.length > 0; offNumber += 1) {
+          const choices = preferred
+            .filter((day) => !plannedDaysOff[employee.id].has(day) && day !== saturdayIndex)
+            .map((day, index) => ({ day, load: offCount(day), turn: (index + employeeIndex + weekIndex) % preferred.length }))
+            .filter((choice) => choice.load < maxOffPerDay)
+            .sort((a, b) => a.load - b.load || a.turn - b.turn);
+          if (choices.length > 0) plannedDaysOff[employee.id].add(choices[0].day);
+          else if (preferred.includes(saturdayIndex)) plannedDaysOff[employee.id].add(saturdayIndex);
+          else break;
+        }
+
+        // Otherwise rotating days off move each week so nobody always gets the
+        // same one. They land on Monday–Friday; Saturdays off are shared out fairly below.
         for (let offNumber = plannedDaysOff[employee.id].size; offNumber < daysOff; offNumber += 1) {
           let offDay = (employeeIndex + weekIndex + offNumber * 2) % weekdaysOnly;
           let tries = 0;
@@ -1282,6 +1319,7 @@ export default function SchedulePage() {
             })
             .sort(
               (a, b) =>
+                Number(preferredOffFor(employee.id).has(b.weekday)) - Number(preferredOffFor(employee.id).has(a.weekday)) ||
                 Number(a.weekday === saturdayIndex) - Number(b.weekday === saturdayIndex) ||
                 workingOn(b) - workingOn(a) ||
                 b.weekday - a.weekday,
@@ -1307,7 +1345,9 @@ export default function SchedulePage() {
               !isApprovedPTO(employee.id, day.offset) &&
               // Keep a planned Saturday off so the Saturday-off goal holds.
               !(day.weekday === saturdayIndex && plannedDaysOff[employee.id].has(saturdayIndex)),
-          );
+          )
+            // Work a day they didn't ask off before a preferred day off.
+            .sort((a, b) => Number(preferredOffFor(employee.id).has(a.weekday)) - Number(preferredOffFor(employee.id).has(b.weekday)));
 
           for (const day of offDays) {
             if (currentHours >= rules.targetHours - 4) break;
